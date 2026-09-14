@@ -13,6 +13,8 @@ on:
       scan_args:
         description: "Extra args for the scanner (e.g. --limit 800)"
         default: ""
+  repository_dispatch:         # fired by the dashboard's "Refresh scan" button
+    types: [refresh]           # (via the Cloudflare Worker in cloudflare/)
 
 permissions:
   contents: write             # peaceiris pushes the built site to gh-pages

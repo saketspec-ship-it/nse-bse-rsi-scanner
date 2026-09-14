@@ -124,6 +124,12 @@ header .sub{color:var(--muted);font-size:13px}
 .chip input{margin:0}
 .chip.on{background:var(--blu-bg);border-color:var(--blu);color:var(--blu)}
 button.reset{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0 2px}
+.toolbar button{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px}
+.toolbar button:hover:not(:disabled){background:var(--blu-bg);border-color:var(--blu)}
+.toolbar button:disabled{opacity:.5;cursor:default}
+#refresh-status{font-size:12px;color:var(--muted)}
+#visitor-counts{font-size:12px;color:var(--muted);margin:2px 0 8px}
 .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--card);box-shadow:var(--shadow)}
 table{border-collapse:collapse;width:100%;font-size:13px;min-width:1180px}
 th,td{padding:7px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
@@ -174,6 +180,14 @@ footer{margin-top:22px;color:var(--muted);font-size:12px}
   <button class="reset" id="reset">Reset filters</button>
   <span class="tag" id="count"></span>
 </div>
+
+<div class="toolbar">
+  <button id="refresh-btn" onclick="triggerRefresh()" hidden>&#8635; Refresh scan</button>
+  <button id="csv-btn" onclick="downloadCsv()">&#8681; CSV</button>
+  <button id="excel-btn" onclick="downloadExcel()">&#8681; Excel</button>
+  <span id="refresh-status"></span>
+</div>
+<div id="visitor-counts">Visitors today: <span id="vc-today">-</span> &middot; All-time: <span id="vc-total">-</span> &middot; Downloads: <span id="vc-downloads">-</span> <span style="opacity:.6">(may lag up to 4h)</span></div>
 
 <div class="tablewrap">
 <table id="tbl">
@@ -366,6 +380,56 @@ function openModal(d){
 }
 function closeModal(){document.getElementById('modal').classList.remove('open');}
 
+// ---- toolbar: config + CSV/Excel export + visitor counter + refresh -------
+// Reuses the existing GoatCounter site with an /rsi* path prefix so these
+// counts stay separate from the VCP dashboard. Point GOATCOUNTER at a
+// dedicated site if you prefer. Set REFRESH_PROXY_URL to your Cloudflare
+// Worker URL to reveal the "Refresh scan" button.
+const GOATCOUNTER='https://vcpdash.goatcounter.com';
+const GC='/rsi';
+const REFRESH_PROXY_URL='';
+
+const EXPORT_COLS=[
+ ['company','Company'],['nse_symbol','NSE'],['bse_code','BSE'],['isin','ISIN'],
+ ['price','Price'],['market_cap_cr','MarketCap_Cr'],['mcap_class','Cap'],['pe','PE'],
+ ['rsi_1d','RSI_1D'],['rsi_1w','RSI_1W'],['rsi_1m','RSI_1M_confirmed'],['live_rsi_1m','RSI_1M_live'],
+ ['momentum_score','Score'],['days_since_1m_cross60','DaysSince_1M_gt60'],['m1_cross_date','Crossed60On'],
+ ['pure_crossover_1m','PureCrossover'],['days_in_signal','DaysInSignal'],['signal_since','InSignalSince'],
+ ['category','Signal'],['sector','Sector'],['industry','Industry'],['last_date','Updated'],
+];
+function exportRows(){ return sorted(DATA.filter(passes)); }
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+function fname(ext){ return 'nse_bse_rsi_'+todayStr()+'.'+ext; }
+function triggerDownload(blob,fn){ const u=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=u; a.download=fn; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(u); }
+function recordDownload(){ if(!GOATCOUNTER) return; const i=new Image(); i.src=GOATCOUNTER+'/count?p='+encodeURIComponent(GC+'-download')+'&t='+encodeURIComponent(document.title+' download'); }
+function downloadCsv(){ recordDownload(); const rows=exportRows(); if(!rows.length) return;
+  const esc=v=>{ if(v===null||v===undefined) v=''; if(typeof v==='boolean') v=v?'Yes':''; return '"'+String(v).replace(/"/g,'""')+'"'; };
+  const lines=[EXPORT_COLS.map(c=>esc(c[1])).join(',')];
+  rows.forEach(r=>lines.push(EXPORT_COLS.map(c=>esc(r[c[0]])).join(',')));
+  triggerDownload(new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8;'}), fname('csv')); }
+function downloadExcel(){ recordDownload(); const rows=exportRows(); if(!rows.length) return;
+  const xe=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
+  const cell=v=>{ if(typeof v==='boolean') v=v?'Yes':''; const t=(typeof v==='number')?'Number':'String'; const txt=(v===null||v===undefined)?'':v; return '<Cell><Data ss:Type="'+t+'">'+xe(txt)+'</Data></Cell>'; };
+  const hdr='<Row>'+EXPORT_COLS.map(c=>'<Cell><Data ss:Type="String">'+xe(c[1])+'</Data></Cell>').join('')+'</Row>';
+  const body=rows.map(r=>'<Row>'+EXPORT_COLS.map(c=>cell(r[c[0]])).join('')+'</Row>').join('');
+  const xml='<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>'+
+    '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">'+
+    '<Worksheet ss:Name="RSI Scan"><Table>'+hdr+body+'</Table></Worksheet></Workbook>';
+  triggerDownload(new Blob([xml],{type:'application/vnd.ms-excel;charset=utf-8;'}), fname('xls')); }
+function triggerRefresh(){ const b=document.getElementById('refresh-btn'), s=document.getElementById('refresh-status');
+  if(!REFRESH_PROXY_URL){ s.textContent='Refresh not configured.'; return; }
+  b.disabled=true; s.textContent='Triggering a full re-scan...';
+  fetch(REFRESH_PROXY_URL,{method:'POST'}).then(r=>r.text().then(t=>({ok:r.ok,text:t}))).then(res=>{
+    s.textContent=res.ok?'Triggered. Cloud scan runs (best-effort) — reload in a few minutes.':'Trigger failed: '+res.text;
+    if(!res.ok) b.disabled=false;
+  }).catch(()=>{ s.textContent='Trigger failed (network).'; b.disabled=false; });
+  setTimeout(()=>{b.disabled=false;},120000); }
+function initCounter(){ if(!GOATCOUNTER) return; const d=todayStr();
+  const rec=p=>{ const i=new Image(); i.src=GOATCOUNTER+'/count?p='+encodeURIComponent(p)+'&t='+encodeURIComponent(document.title); };
+  const show=(p,el)=>fetch(GOATCOUNTER+'/counter/'+encodeURIComponent(p)+'.json').then(r=>r.json()).then(x=>{document.getElementById(el).textContent=x.count||'0';}).catch(()=>{document.getElementById(el).textContent='?';});
+  rec(GC+'-lifetime'); rec(GC+'-daily/'+d);
+  show(GC+'-lifetime','vc-total'); show(GC+'-daily/'+d,'vc-today'); show(GC+'-download','vc-downloads'); }
+
 function boot(){
   DATA=window.__DATA__||[]; META=window.__META__||{};
   NEW=new Set(META.new_isins||[]);
@@ -386,6 +450,8 @@ function boot(){
   document.getElementById('tbody').onclick=e=>{const tr=e.target.closest('tr[data-isin]'); if(!tr) return; const d=DATA.find(x=>x.isin===tr.dataset.isin); if(d) openModal(d);};
   document.getElementById('modal').onclick=e=>{if(e.target.id==='modal') closeModal();};
   document.addEventListener('keydown',e=>{if(e.key==='Escape') closeModal();});
+  if(REFRESH_PROXY_URL) document.getElementById('refresh-btn').hidden=false;
+  initCounter();
 }
 (window.__LOAD__||Promise.resolve()).then(boot).catch(e=>{document.getElementById('loading').textContent='Failed to load data.json: '+e;});
 </script>

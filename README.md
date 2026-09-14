@@ -154,6 +154,23 @@ powershell -ExecutionPolicy Bypass -File scripts\deploy_pages.ps1            # s
 powershell -ExecutionPolicy Bypass -File scripts\deploy_pages.ps1 -SkipScan  # deploy current site/
 ```
 
+## Dashboard toolbar: export, counter, refresh
+
+- **CSV / Excel export** — download the currently filtered + sorted rows. Excel
+  uses the SpreadsheetML 2003 XML format (a real `.xls`, no library needed).
+  Works out of the box.
+- **Visitor / download counter** — via [GoatCounter](https://www.goatcounter.com).
+  Configured in `rsi_scanner/dashboard.py` (`GOATCOUNTER`, `GC` path prefix). It
+  reuses the existing `vcpdash.goatcounter.com` site with distinct `/rsi*` paths,
+  so RSI counts stay separate from the VCP dashboard. Point `GOATCOUNTER` at a
+  dedicated site if you prefer; counts can lag up to ~4h (GoatCounter free tier).
+- **Refresh scan button** — hidden until you set `REFRESH_PROXY_URL` in
+  `dashboard.py`. It POSTs to a small Cloudflare Worker (`cloudflare/refresh-worker.js`)
+  that holds a GitHub token server-side and fires a `repository_dispatch` to
+  re-run the cloud workflow. See that file's header for setup.
+  **Caveat:** the cloud scan uses Yahoo, which often blocks GitHub runners, so a
+  cloud refresh is best-effort — the reliable updates come from the local task.
+
 ## Scheduling (daily, after market close)
 
 Run once per trading day after the Indian market closes (weekly/monthly RSI use
