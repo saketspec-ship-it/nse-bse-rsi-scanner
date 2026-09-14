@@ -188,6 +188,7 @@ footer{margin-top:22px;color:var(--muted);font-size:12px}
   <span id="refresh-status"></span>
 </div>
 <div id="visitor-counts">Visitors today: <span id="vc-today">-</span> &middot; All-time: <span id="vc-total">-</span> &middot; Downloads: <span id="vc-downloads">-</span> <span style="opacity:.6">(may lag up to 4h)</span></div>
+<div id="datanote" style="font-size:12px;color:var(--muted);margin:2px 0 8px">&#128197; Prices &amp; RSI are end-of-day, <b>as of the last scan shown at the top</b>. The BSE scrip code and each stock's exact data date are in its row detail &mdash; click any row.</div>
 
 <div class="tablewrap">
 <table id="tbl">
@@ -195,7 +196,7 @@ footer{margin-top:22px;color:var(--muted);font-size:12px}
   <tr id="hrow"></tr>
   <tr class="filt" id="frow"></tr>
 </thead>
-<tbody id="tbody"><tr><td id="loading" colspan="17">Loading data…</td></tr></tbody>
+<tbody id="tbody"><tr><td id="loading" colspan="16">Loading data…</td></tr></tbody>
 </table>
 </div>
 
@@ -225,7 +226,7 @@ const COLS=[
  {k:'rank',label:'#',type:'rank',align:'r'},
  {k:'company',label:'Company',type:'text',align:'l'},
  {k:'nse_symbol',label:'NSE',type:'text',align:'l'},
- {k:'bse_code',label:'BSE',type:'text',align:'l'},
+ {k:'sector',label:'Sector',type:'text',align:'l'},
  {k:'price',label:'Price ₹',type:'num',align:'r'},
  {k:'market_cap_cr',label:'MCap Cr',type:'num',align:'r'},
  {k:'pe',label:'P/E',type:'num',align:'r'},
@@ -238,7 +239,6 @@ const COLS=[
  {k:'pure_crossover_1m',label:'Pure 1M x-over',type:'bool',align:'r'},
  {k:'days_in_signal',label:'Days in Signal',type:'num',align:'r'},
  {k:'category',label:'Signal',type:'cat',align:'l'},
- {k:'last_date',label:'Updated',type:'text',align:'l'},
 ];
 const CATS=['Strong Momentum','Primary Signal','Watchlist','No Signal','Insufficient Data'];
 const CATCLASS={'Strong Momentum':'b-strong','Primary Signal':'b-primary','Watchlist':'b-watch','No Signal':'b-none','Insufficient Data':'b-insuff'};
@@ -302,7 +302,7 @@ function render(){
       '<td>'+(i+1)+'</td>'+
       '<td class="l">'+nb+esc(d.company)+'</td>'+
       '<td class="l">'+(d.nse_symbol||'<span class=muted>–</span>')+'</td>'+
-      '<td class="l">'+(d.bse_code||'<span class=muted>–</span>')+'</td>'+
+      '<td class="l">'+(d.sector?esc(d.sector):'<span class=muted>–</span>')+'</td>'+
       '<td>'+fnum(d.price,2)+'</td>'+
       '<td>'+fnum(d.market_cap_cr,0)+'</td>'+
       '<td>'+(d.pe==null?'<span class=muted>N/A</span>':Number(d.pe).toFixed(1))+'</td>'+
@@ -314,10 +314,9 @@ function render(){
       '<td>'+(d.days_since_1m_cross60!=null?d.days_since_1m_cross60:'<span class=muted>–</span>')+'</td>'+
       '<td>'+(d.pure_crossover_1m?'<span class="badge b-cross">⚡ CROSS</span>':'<span class=muted>–</span>')+'</td>'+
       '<td>'+days+'</td>'+
-      '<td class="l"><span class="badge '+cls+'">'+(CATEMOJI[d.category]||'')+' '+d.category+'</span>'+prov+'</td>'+
-      '<td class="l muted">'+(d.last_date||'–')+'</td></tr>';
+      '<td class="l"><span class="badge '+cls+'">'+(CATEMOJI[d.category]||'')+' '+d.category+'</span>'+prov+'</td></tr>';
   }).join('');
-  tb.innerHTML=frag + (rows.length>3000?'<tr><td class="l muted" colspan="17">… '+(rows.length-3000).toLocaleString('en-IN')+' more rows hidden — filter to narrow.</td></tr>':'');
+  tb.innerHTML=frag + (rows.length>3000?'<tr><td class="l muted" colspan="16">… '+(rows.length-3000).toLocaleString('en-IN')+' more rows hidden — filter to narrow.</td></tr>':'');
 }
 function buildHead(){
   document.getElementById('hrow').innerHTML=COLS.map(c=>{
