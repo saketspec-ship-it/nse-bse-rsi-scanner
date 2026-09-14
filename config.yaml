@@ -1,0 +1,86 @@
+# ---------------------------------------------------------------------------
+# NSE + BSE RSI Momentum Scanner - configuration
+# All meaningful parameters live here. Defaults implement the primary spec.
+# ---------------------------------------------------------------------------
+
+rsi:
+  period: 14                 # Wilder RSI lookback
+
+# Primary screening thresholds. Signal = ALL true (AND logic, never OR).
+thresholds:
+  daily_gt: 40               # RSI_1D >
+  weekly_gt: 40              # RSI_1W >
+  monthly_gt: 60             # RSI_1M >
+
+# Signal-strength classification bands (section 6).
+classification:
+  strong:                    # Strong Momentum
+    monthly_gt: 60
+    weekly_gt: 50
+    daily_gt: 50
+  watchlist:                 # Approaching-signal watchlist
+    monthly_gt: 55
+    weekly_gt: 35
+    daily_gt: 35
+
+candles:
+  # Use only completed weekly/monthly candles for the confirmed signal.
+  # When false (intraday/provisional mode) the in-progress candle is included
+  # and every resulting signal is flagged PROVISIONAL.
+  confirmed_only: true
+  weekly_rule: "W-FRI"       # week ends Friday (IST trading week)
+  monthly_rule: "ME"         # month end
+
+data:
+  # yfinance auto_adjust=True -> OHLC are split/bonus adjusted.
+  # RSI is therefore computed on ADJUSTED close. Documented in README.
+  adjusted: true
+  history_period: "6y"       # daily history pulled per symbol
+  cache_max_age_hours: 20     # reuse on-disk OHLC newer than this (raise to
+                              # reuse across days without re-downloading)
+  min_daily_bars: 60         # below this -> Insufficient Data (daily RSI)
+  min_weekly_bars: 20        # completed weekly candles needed
+  min_monthly_bars: 16       # completed monthly candles needed (period+~2)
+  stale_days: 5              # last close older than N trading days -> stale
+  batch_size: 40             # yfinance download batch
+  max_workers: 4             # concurrent download threads
+  request_pause: 0.4         # seconds between batches (politeness / rate limit)
+  retries: 3
+
+# Momentum score weights (section 18). Score never overrides the AND signal.
+momentum_score:
+  weight_monthly: 0.40
+  weight_weekly: 0.30
+  weight_daily: 0.30
+
+# Optional quality filters (section 15). OFF by default; never applied to the
+# primary RSI signal unless enabled here.
+quality_filters:
+  enabled: false
+  min_price: 50
+  min_market_cap_cr: 1000    # rupees crore
+  min_avg_volume: 100000
+  require_positive_pe: false
+
+universe:
+  source: "both"             # nse | bse | both
+  include_series: ["EQ", "BE"]   # NSE series treated as ordinary equity
+  refresh_days: 7            # rebuild master table if older than this
+  # Optional cap for a bounded run (0 = no cap, full universe).
+  limit: 0
+
+timezone: "Asia/Kolkata"
+
+paths:
+  data_dir: "data"
+  cache_dir: "data/cache"
+  universe_dir: "data/universe"
+  state_dir: "data/state"
+  history_dir: "data/history"
+  output_dir: "data/output"
+  site_dir: "site"           # GitHub Pages bundle (index.html + data.json)
+
+alerts:
+  # Alerts fire only on NEW entries into the signal (dedup via signal state).
+  enabled: true
+  channels: ["file"]         # file | (extend: webhook/telegram/email)

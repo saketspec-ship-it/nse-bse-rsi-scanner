@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Cached market data & generated outputs (regenerated on each scan).
+data/cache/
+data/output/
+
+# The Pages bundle is generated and force-pushed to the gh-pages branch by
+# scripts/deploy_pages.ps1 (or CI), so it is not tracked on main.
+site/
+
+# Signal state / history hold the audit trail. Keep them if you want cross-run
+# alert dedup under version control; ignored by default to avoid churn.
+data/state/
+data/history/
+data/universe/

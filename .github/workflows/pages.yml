@@ -1,0 +1,62 @@
+name: RSI Scan & Deploy to Pages
+
+# Best-effort CLOUD refresh. NOTE: GitHub-hosted runners use datacenter IPs
+# that Yahoo Finance frequently rate-limits (HTTP 401/429). If too little data
+# comes back, the "sufficiency guard" fails the job BEFORE deploy, so a broken
+# scan never overwrites the good dashboard published from your local machine.
+
+on:
+  schedule:
+    - cron: "30 12 * * 1-5"   # 12:30 UTC = 18:00 IST, Mon-Fri (after NSE close)
+  workflow_dispatch:
+    inputs:
+      scan_args:
+        description: "Extra args for the scanner (e.g. --limit 800)"
+        default: ""
+
+permissions:
+  contents: write             # peaceiris pushes the built site to gh-pages
+
+concurrency:
+  group: rsi-pages
+  cancel-in-progress: false
+
+jobs:
+  scan-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Reuse OHLC parquet between runs so re-scans are faster and gentler on
+      # Yahoo. Keyed by day so it refreshes daily.
+      - name: Cache OHLC data
+        uses: actions/cache@v4
+        with:
+          path: data/cache
+          key: ohlc-${{ github.run_id }}
+          restore-keys: ohlc-
+
+      - name: Run scan (best-effort)
+        run: |
+          python -m rsi_scanner.scan --fundamentals-scope signal ${{ github.event.inputs.scan_args }}
+        continue-on-error: true
+
+      - name: Data-sufficiency guard
+        run: python scripts/check_site.py --min-rows 1000 --min-priced 500
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          publish_branch: gh-pages
+          commit_message: "scan ${{ github.run_number }}"
