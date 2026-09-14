@@ -94,6 +94,22 @@ def run(args) -> dict:
             "sector": None, "industry": _clean_str(sec.get("industry")), "price": None,
         }
 
+    # Overlay any previously-cached sector / P/E / industry onto EVERY security
+    # (not just the signal set). Sector is stable, so once fetched it persists
+    # for all symbols without re-hitting Yahoo on every run.
+    fcache = fundamentals.load_cache(cfg)
+    n_sector = 0
+    for t, base in fund_map.items():
+        c = fcache.get(t)
+        if not c:
+            continue
+        for k in ("pe", "forward_pe", "sector", "industry"):
+            if c.get(k) is not None:
+                base[k] = c[k]
+        if base.get("sector"):
+            n_sector += 1
+    _log(f"Sector known for {n_sector}/{len(fund_map)} from cache (rest -> Unknown).")
+
     def do_screen():
         rows: list[screener.ScreenResult] = []
         for _, sec in master.iterrows():

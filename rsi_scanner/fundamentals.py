@@ -60,6 +60,15 @@ def _save_cache(cfg: Config, data: dict) -> None:
         pass
 
 
+def load_cache(cfg: Config) -> dict:
+    """Return the full on-disk fundamentals cache (ticker -> record).
+
+    Sector is stable, so this is overlaid onto every security each run — once a
+    ticker's sector has been fetched once it persists without re-fetching.
+    """
+    return _load_cache(cfg)
+
+
 def fetch_fundamentals(
     cfg: Config,
     tickers: list[str],

@@ -27,6 +27,8 @@ def build_payload(results: list[ScreenResult]) -> list[dict]:
     rows = []
     for r in results:
         d = r.to_row()
+        if not d.get("sector"):
+            d["sector"] = "Unknown"      # never leave the Sector column blank
         d["chart"] = (
             f"https://www.tradingview.com/chart/?symbol=NSE:{r.nse_symbol}"
             if r.nse_symbol else
@@ -302,7 +304,7 @@ function render(){
       '<td>'+(i+1)+'</td>'+
       '<td class="l">'+nb+esc(d.company)+'</td>'+
       '<td class="l">'+(d.nse_symbol||'<span class=muted>–</span>')+'</td>'+
-      '<td class="l">'+(d.sector?esc(d.sector):'<span class=muted>–</span>')+'</td>'+
+      '<td class="l">'+(d.sector==='Unknown'?'<span class=muted>Unknown</span>':esc(d.sector))+'</td>'+
       '<td>'+fnum(d.price,2)+'</td>'+
       '<td>'+fnum(d.market_cap_cr,0)+'</td>'+
       '<td>'+(d.pe==null?'<span class=muted>N/A</span>':Number(d.pe).toFixed(1))+'</td>'+
