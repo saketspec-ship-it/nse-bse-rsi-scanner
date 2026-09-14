@@ -46,6 +46,9 @@ class ScreenResult:
     category: str = CAT_INSUFFICIENT
     provisional: bool = False
     momentum_score: float | None = None
+    chg_1d: float | None = None
+    chg_1w: float | None = None
+    chg_1m: float | None = None
     days_in_signal: int | None = None
     signal_since: str | None = None
     days_since_1m_cross60: int | None = None
@@ -92,6 +95,7 @@ def compute_rsis(cfg: Config, daily: pd.DataFrame) -> dict:
         "rsi_1d": None, "rsi_1w": None, "rsi_1m": None,
         "prev_1d": None, "prev_1w": None, "prev_1m": None,
         "price": None, "avg_volume": None, "last_date": None,
+        "chg_1d": None, "chg_1w": None, "chg_1m": None,
         "live_rsi_1m": None, "pure_crossover_1m": False,
         "m1_cross_days": None, "m1_cross_date": None,
         "m1_cross_months": None, "m1_cross_before_data": False,
@@ -108,6 +112,11 @@ def compute_rsis(cfg: Config, daily: pd.DataFrame) -> dict:
     res["last_date"] = asof.strftime("%Y-%m-%d")
     if "Volume" in daily.columns:
         res["avg_volume"] = _round(daily["Volume"].tail(20).mean())
+
+    # Trailing % change over 1 / 5 / 21 trading days (for the constituent tables).
+    def _pctchg(n: int):
+        return round((close.iloc[-1] / close.iloc[-1 - n] - 1) * 100, 2) if len(close) > n else None
+    res["chg_1d"], res["chg_1w"], res["chg_1m"] = _pctchg(1), _pctchg(5), _pctchg(21)
 
     # Staleness: last close far behind "today" (best-effort; scan-time relative).
     age_days = (pd.Timestamp.now().normalize() - asof.normalize()).days
@@ -293,6 +302,7 @@ def screen_security(cfg: Config, sec: dict, daily: pd.DataFrame, fund: dict | No
         prev_rsi_1d=rr["prev_1d"], prev_rsi_1w=rr["prev_1w"], prev_rsi_1m=rr["prev_1m"],
         rsi_signal=signal, category=category, provisional=rr["provisional"],
         momentum_score=score,
+        chg_1d=rr["chg_1d"], chg_1w=rr["chg_1w"], chg_1m=rr["chg_1m"],
         days_in_signal=days_in_signal, signal_since=signal_since,
         days_since_1m_cross60=rr["m1_cross_days"], m1_cross_date=rr["m1_cross_date"],
         months_since_1m_cross60=rr["m1_cross_months"],

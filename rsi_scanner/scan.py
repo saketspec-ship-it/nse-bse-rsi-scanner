@@ -176,19 +176,24 @@ def run(args) -> dict:
         pd.DataFrame(bt_summary["records"]).to_csv(out_dir / "backtest_entries.csv", index=False)
         _log(f"Backtest: {bt_summary['n_records']} historical entries -> {bt_path}")
 
-    _log("Building sector indices (mcap >= 2000 Cr, known sector)...")
-    sectors = sector_index.build_sector_indices(cfg, results, frames)
-    _log(f"Built {len(sectors['sectors'])} sector indices.")
+    _log("Building sector indices (mcap >= 2000 Cr, known sector; cap-tiered)...")
+    sectors = sector_index.build_indices(cfg, results, frames, "sector")
+    _log(f"Built {len(sectors['groups'])} sector indices.")
+    _log("Building industry indices (mcap >= 2000 Cr, known industry; cap-tiered)...")
+    industries = sector_index.build_indices(cfg, results, frames, "industry", max_groups=80)
+    _log(f"Built {len(industries['groups'])} industry indices.")
 
     _log("Rendering HTML dashboard...")
-    html = dashboard.render_embedded(cfg, results, recon, scanned=len(results), backtest_summary=bt_summary, sectors=sectors)
+    html = dashboard.render_embedded(cfg, results, recon, scanned=len(results),
+                                     backtest_summary=bt_summary, sectors=sectors, industries=industries)
     dash_path = out_dir / "dashboard.html"
     dash_path.write_text(html, encoding="utf-8")
     _log(f"Dashboard (self-contained) -> {dash_path}")
 
     site_dir = cfg.path("site_dir")
-    dashboard.write_site(cfg, site_dir, results, recon, scanned=len(results), backtest_summary=bt_summary, sectors=sectors)
-    _log(f"Pages site (index.html + data.json + sectors.json) -> {site_dir}")
+    dashboard.write_site(cfg, site_dir, results, recon, scanned=len(results),
+                         backtest_summary=bt_summary, sectors=sectors, industries=industries)
+    _log(f"Pages site (index.html + data.json + sectors.json + industries.json) -> {site_dir}")
 
     print("\n" + summ)
     return {

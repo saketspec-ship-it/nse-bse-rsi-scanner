@@ -57,21 +57,24 @@ def build_meta(cfg: Config, recon: dict, scanned: int, backtest_summary: dict | 
     }
 
 
-def render_embedded(cfg, results, recon, scanned, backtest_summary=None, sectors=None) -> str:
+def render_embedded(cfg, results, recon, scanned, backtest_summary=None, sectors=None, industries=None) -> str:
     data = json.dumps(build_payload(results))
     meta = json.dumps(build_meta(cfg, recon, scanned, backtest_summary, results))
     sec = json.dumps(sectors or {})
-    loader = f"<script>window.__META__={meta};window.__DATA__={data};window.__SECTORS__={sec};</script>"
+    ind = json.dumps(industries or {})
+    loader = (f"<script>window.__META__={meta};window.__DATA__={data};"
+              f"window.__SECTORS__={sec};window.__INDUSTRIES__={ind};</script>")
     return _SHELL.replace("<!--DATA_LOADER-->", loader)
 
 
-def write_site(cfg, out_dir, results, recon, scanned, backtest_summary=None, sectors=None) -> str:
-    """Write index.html + data.json + meta.json + sectors.json into ``out_dir``."""
+def write_site(cfg, out_dir, results, recon, scanned, backtest_summary=None, sectors=None, industries=None) -> str:
+    """Write index.html + data/meta/sectors/industries json into ``out_dir``."""
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "data.json").write_text(json.dumps(build_payload(results)), encoding="utf-8")
     (out_dir / "meta.json").write_text(json.dumps(build_meta(cfg, recon, scanned, backtest_summary, results)), encoding="utf-8")
     (out_dir / "sectors.json").write_text(json.dumps(sectors or {}), encoding="utf-8")
-    # sectors.json is fetched lazily when the Sector Indices tab is first opened.
+    (out_dir / "industries.json").write_text(json.dumps(industries or {}), encoding="utf-8")
+    # sectors.json / industries.json are fetched lazily when their tab is opened.
     loader = (
         "<script>"
         "window.__LOAD__=Promise.all(["
@@ -86,8 +89,8 @@ def write_site(cfg, out_dir, results, recon, scanned, backtest_summary=None, sec
 
 
 # Back-compat: scan.py may still call render().
-def render(cfg, results, recon, scanned, backtest_summary=None, sectors=None) -> str:
-    return render_embedded(cfg, results, recon, scanned, backtest_summary, sectors)
+def render(cfg, results, recon, scanned, backtest_summary=None, sectors=None, industries=None) -> str:
+    return render_embedded(cfg, results, recon, scanned, backtest_summary, sectors, industries)
 
 
 _SHELL = r"""<!doctype html>
@@ -144,9 +147,10 @@ button.reset{background:transparent;border:1px solid var(--line);color:var(--mut
 .tfbtns button{background:var(--card);color:var(--ink);border:1px solid var(--line);padding:5px 13px;cursor:pointer;font-size:13px;margin:0}
 .tfbtns button:first-child{border-radius:8px 0 0 8px}.tfbtns button:last-child{border-radius:0 8px 8px 0}
 .tfbtns button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
-#chart{width:100%;height:520px;background:var(--card);border:1px solid var(--line);border-radius:10px;margin-top:6px}
-#sectbl tbody tr:hover{background:var(--blu-bg);cursor:pointer}
-#sectbl tbody tr.sel{background:var(--blu-bg)}
+.chartbox{width:100%;height:520px;background:var(--card);border:1px solid var(--line);border-radius:10px;margin-top:6px}
+.idxtbl tbody tr:hover{background:var(--blu-bg);cursor:pointer}
+.idxtbl tbody tr.sel{background:var(--blu-bg)}
+.chips select,.chartctl select{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:13px}
 .up{color:var(--grn)}.dn{color:#d93025}
 .tablewrap{overflow:auto;max-height:calc(100vh - 150px);border:1px solid var(--line);border-radius:10px;background:var(--card);box-shadow:var(--shadow)}
 table{border-collapse:collapse;width:100%;font-size:13px;min-width:1180px}
@@ -190,6 +194,7 @@ footer{margin-top:22px;color:var(--muted);font-size:12px}
 <nav class="tabs">
   <button class="tab on" data-page="1">&#128202; Stocks</button>
   <button class="tab" data-page="2">&#127981; Sector Indices</button>
+  <button class="tab" data-page="3">&#127981; Industry Indices</button>
 </nav>
 
 <div id="page1">
@@ -202,6 +207,9 @@ footer{margin-top:22px;color:var(--muted);font-size:12px}
   <span class="chip" id="chNew"><input type="checkbox" id="fNew"> New only</span>
   <span class="chip" id="chStrong"><input type="checkbox" id="fStrong"> Strong only</span>
   <span class="chip" id="chCross"><input type="checkbox" id="fCross"> ⚡ Pure 1M crossover</span>
+  <label style="font-size:13px;color:var(--muted)">Cap
+    <select id="fCap"><option value="">All</option><option>Large Cap</option><option>Mid Cap</option><option>Small Cap</option><option>Micro Cap</option></select>
+  </label>
   <button class="reset" id="reset">Reset filters</button>
   <span class="tag" id="count"></span>
 </div>
@@ -229,23 +237,50 @@ footer{margin-top:22px;color:var(--muted);font-size:12px}
 
 <div id="page2" hidden>
   <div class="cond">Sector momentum indices &mdash; market-cap weighted, rebased to 100. Constituents: stocks with market cap &ge; &#8377;2,000 Cr and a known sector.
-    <small>Timeframes 1D / 1W / 1M &middot; indicators: RSI(14), SMA 7/21/50/220, Bollinger Bands(20,2). Click a sector row, or use the selector below the table.</small>
+    <small>Cap-tiered (Large/Mid/Small) &middot; 1D / 1W / 1M &middot; RSI(14), SMA 7/21/50/220, Bollinger Bands(20,2). Click a row, or use the selector.</small>
   </div>
+  <div class="chartctl" style="margin-top:0"><label>Cap <select id="sec-cap"></select></label></div>
   <div class="tablewrap" style="max-height:none">
-    <table id="sectbl">
-      <thead><tr id="sec-hrow"></tr></thead>
-      <tbody id="sec-tbody"><tr><td id="sec-loading" colspan="9" style="padding:20px;text-align:center;color:var(--muted)">Loading sector indices…</td></tr></tbody>
-    </table>
+    <table class="idxtbl"><thead><tr id="sec-hrow"></tr></thead>
+      <tbody id="sec-tbody"><tr><td colspan="9" style="padding:20px;text-align:center;color:var(--muted)">Loading sector indices…</td></tr></tbody></table>
   </div>
   <div class="chartctl">
     <label>Sector <select id="sec-sel"></select></label>
-    <span class="tfbtns" id="tf-btns"><button data-tf="1D">1D</button><button data-tf="1W">1W</button><button data-tf="1M" class="on">1M</button></span>
+    <span class="tfbtns" id="sec-tf"><button data-tf="1D">1D</button><button data-tf="1W">1W</button><button data-tf="1M" class="on">1M</button></span>
+    <label><input type="checkbox" id="sec-ma" checked> Moving averages</label>
+    <label><input type="checkbox" id="sec-bb" checked> Bollinger bands</label>
+    <span class="tag" id="sec-info"></span>
+  </div>
+  <div class="chartbox" id="sec-chart"></div>
+  <div style="font-size:12px;color:var(--muted);margin-top:6px">MA/SMA periods are in the selected timeframe's bars (on 1D they are 7/21/50/220 days). Index = cap-weighted average of constituent returns; not an official exchange index.</div>
+  <div style="font-size:14px;font-weight:600;margin:16px 0 4px" id="sec-cons-title">Constituents</div>
+  <div class="tablewrap" style="max-height:520px">
+    <table class="idxtbl"><thead><tr id="sec-cons-h"></tr></thead><tbody id="sec-cons-b"></tbody></table>
+  </div>
+</div>
+
+<div id="page3" hidden>
+  <div class="cond">Industry momentum indices &mdash; finer than sector, market-cap weighted, rebased to 100. Constituents: stocks with market cap &ge; &#8377;2,000 Cr and a known industry.
+    <small>Cap-tiered (Large/Mid/Small) &middot; 1D / 1W / 1M &middot; RSI(14), SMA 7/21/50/220, Bollinger Bands(20,2). Click a row, or use the selector.</small>
+  </div>
+  <div class="chartctl" style="margin-top:0"><label>Cap <select id="ind-cap"></select></label></div>
+  <div class="tablewrap" style="max-height:none">
+    <table class="idxtbl"><thead><tr id="ind-hrow"></tr></thead>
+      <tbody id="ind-tbody"><tr><td colspan="9" style="padding:20px;text-align:center;color:var(--muted)">Loading industry indices…</td></tr></tbody></table>
+  </div>
+  <div class="chartctl">
+    <label>Industry <select id="ind-sel"></select></label>
+    <span class="tfbtns" id="ind-tf"><button data-tf="1D">1D</button><button data-tf="1W">1W</button><button data-tf="1M" class="on">1M</button></span>
     <label><input type="checkbox" id="ind-ma" checked> Moving averages</label>
     <label><input type="checkbox" id="ind-bb" checked> Bollinger bands</label>
-    <span class="tag" id="chart-info"></span>
+    <span class="tag" id="ind-info"></span>
   </div>
-  <div id="chart"></div>
-  <div style="font-size:12px;color:var(--muted);margin-top:6px">MA/SMA periods are in the selected timeframe's bars (e.g. on 1D they are 7/21/50/220 days). Index = cap-weighted average of constituent returns; not an official exchange index.</div>
+  <div class="chartbox" id="ind-chart"></div>
+  <div style="font-size:12px;color:var(--muted);margin-top:6px">Industries with fewer than 3 qualifying constituents in a cap tier are omitted. Index = cap-weighted average of constituent returns; not an official exchange index.</div>
+  <div style="font-size:14px;font-weight:600;margin:16px 0 4px" id="ind-cons-title">Constituents</div>
+  <div class="tablewrap" style="max-height:520px">
+    <table class="idxtbl"><thead><tr id="ind-cons-h"></tr></thead><tbody id="ind-cons-b"></tbody></table>
+  </div>
 </div>
 
 <div class="disc">
@@ -320,6 +355,7 @@ function passes(d){
   if(document.getElementById('fNew').checked && !d.is_new) return false;
   if(document.getElementById('fStrong').checked && d.category!=='Strong Momentum') return false;
   if(document.getElementById('fCross').checked && !d.pure_crossover_1m) return false;
+  {const cap=document.getElementById('fCap').value; if(cap && d.mcap_class!==cap) return false;}
   for(const c of COLS){
     const ex=filters[c.k]; if(!ex) continue;
     if(c.type==='num'){ if(!matchNum(d[c.k],ex)) return false; }
@@ -478,56 +514,87 @@ function initCounter(){ if(!GOATCOUNTER) return; const d=todayStr();
   rec(GC+'-lifetime'); rec(GC+'-daily/'+d);
   show(GC+'-lifetime','vc-total'); show(GC+'-daily/'+d,'vc-today'); show(GC+'-download','vc-downloads'); }
 
-// ---- page 2: sector indices ---------------------------------------------
-let SECTORS=null, chart=null, curSector=null, curTf='1M', sectorsReady=false;
+// ---- index pages (sector & industry), cap-tiered ------------------------
 const MA_COLORS={ma7:'#f4b400',ma21:'#4285f4',ma50:'#db4437',ma220:'#7c3aed'};
+const CAP_LABELS={All:'All (≥₹2,000 Cr)',Large:'Large (≥₹20k Cr)',Mid:'Mid (₹5k–20k Cr)',Small:'Small (₹2k–5k Cr)'};
+const IDX={
+  sec:{page:'page2',winKey:'__SECTORS__',url:'sectors.json',pfx:'sec',label:'Sector',field:'sector',bundle:null,ready:false,chart:null,group:null,tier:'All',tf:'1M'},
+  ind:{page:'page3',winKey:'__INDUSTRIES__',url:'industries.json',pfx:'ind',label:'Industry',field:'industry',bundle:null,ready:false,chart:null,group:null,tier:'All',tf:'1M'},
+};
+function capOf(mc){ if(mc==null) return null; if(mc>=20000) return 'Large'; if(mc>=5000) return 'Mid'; if(mc>=2000) return 'Small'; return null; }
 function themeInk(){ return getComputedStyle(document.body).color; }
 function themeLine(){ return getComputedStyle(document.documentElement).getPropertyValue('--line').trim()||'#ccc'; }
-
-async function ensureSectors(){
-  if(sectorsReady) return;
-  SECTORS=(window.__SECTORS__&&window.__SECTORS__.sectors)?window.__SECTORS__:null;
-  if(!SECTORS){ try{ SECTORS=await fetch('sectors.json').then(r=>r.json()); }catch(e){ SECTORS={sectors:{}}; } }
-  if(!SECTORS.sectors) SECTORS.sectors={};
-  sectorsReady=true; buildSectorTable(); buildSectorSelector();
-}
-function secList(){ const s=SECTORS.sectors||{}; return Object.keys(s).map(k=>Object.assign({name:k},s[k])).sort((a,b)=>b.mcap_cr-a.mcap_cr); }
+function E(id){ return document.getElementById(id); }
 function chgHtml(v){ if(v==null) return '<span class=muted>–</span>'; return '<span class="'+(v>=0?'up':'dn')+'">'+(v>=0?'+':'')+v.toFixed(2)+'%</span>'; }
 function rsiHtml(v){ return v==null?'<span class=muted>–</span>':v.toFixed(1); }
-function buildSectorTable(){
-  const cols=['Sector','#','MCap Cr','% 1D','% 1W','% 1M','RSI 1D','RSI 1W','RSI 1M'];
-  document.getElementById('sec-hrow').innerHTML=cols.map((c,i)=>'<th class="'+(i===0?'l':'')+'">'+c+'</th>').join('');
-  document.getElementById('sec-tbody').innerHTML=secList().map(s=>{const su=s.summary||{};
-    return '<tr data-sector="'+esc(s.name)+'"><td class="l">'+esc(s.name)+'</td><td>'+s.constituents+'</td>'+
-      '<td>'+Number(s.mcap_cr).toLocaleString('en-IN')+'</td><td>'+chgHtml(su.chg_1d)+'</td><td>'+chgHtml(su.chg_1w)+'</td><td>'+chgHtml(su.chg_1m)+'</td>'+
-      '<td>'+rsiHtml(su.rsi_1d)+'</td><td>'+rsiHtml(su.rsi_1w)+'</td><td>'+rsiHtml(su.rsi_1m)+'</td></tr>';}).join('')
-    || '<tr><td colspan="9" style="padding:20px;text-align:center;color:var(--muted)">No sector indices (need stocks ≥₹2,000 Cr with known sectors).</td></tr>';
-  document.querySelectorAll('#sec-tbody tr[data-sector]').forEach(tr=>tr.onclick=()=>selectSector(tr.dataset.sector));
+
+async function ensureIdx(p){
+  if(p.ready) return;
+  let b=window[p.winKey];
+  if(!b || !b.groups){ try{ b=await fetch(p.url).then(r=>r.json()); }catch(e){ b={groups:{}}; } }
+  if(!b.groups) b.groups={};
+  p.bundle=b; p.ready=true;
+  buildCapSel(p); buildIdxTable(p); buildIdxSelector(p);
 }
-function buildSectorSelector(){ const rows=secList();
-  document.getElementById('sec-sel').innerHTML=rows.map(s=>'<option value="'+esc(s.name)+'">'+esc(s.name)+'</option>').join('');
-  if(rows.length && !curSector) curSector=rows[0].name; }
-function selectSector(name){ curSector=name; const sel=document.getElementById('sec-sel'); if(sel) sel.value=name;
-  document.querySelectorAll('#sec-tbody tr').forEach(tr=>tr.classList.toggle('sel',tr.dataset.sector===name)); renderChart(); }
-function renderChart(){
-  if(!curSector||!SECTORS.sectors[curSector]) return;
-  const el=document.getElementById('chart');
+function tiersAvailable(p){ const order=p.bundle.tiers||['All','Large','Mid','Small']; const present=new Set();
+  Object.values(p.bundle.groups).forEach(g=>Object.keys(g).forEach(t=>present.add(t))); return order.filter(t=>present.has(t)); }
+function buildCapSel(p){ const sel=E(p.pfx+'-cap'); const av=tiersAvailable(p);
+  if(!av.includes(p.tier)) p.tier=av[0]||'All';
+  sel.innerHTML=av.map(t=>'<option value="'+t+'">'+(CAP_LABELS[t]||t)+'</option>').join(''); sel.value=p.tier; }
+function groupList(p){ const g=p.bundle.groups||{};
+  return Object.keys(g).filter(k=>g[k][p.tier]).map(k=>Object.assign({name:k},g[k][p.tier])).sort((a,b)=>b.mcap_cr-a.mcap_cr); }
+function buildIdxTable(p){
+  const cols=[p.label,'#','MCap Cr','% 1D','% 1W','% 1M','RSI 1D','RSI 1W','RSI 1M'];
+  E(p.pfx+'-hrow').innerHTML=cols.map((c,i)=>'<th class="'+(i===0?'l':'')+'">'+c+'</th>').join('');
+  const rows=groupList(p);
+  E(p.pfx+'-tbody').innerHTML=(rows.map(s=>{const su=s.summary||{};
+    return '<tr data-group="'+esc(s.name)+'"><td class="l">'+esc(s.name)+'</td><td>'+s.constituents+'</td>'+
+      '<td>'+Number(s.mcap_cr).toLocaleString('en-IN')+'</td><td>'+chgHtml(su.chg_1d)+'</td><td>'+chgHtml(su.chg_1w)+'</td><td>'+chgHtml(su.chg_1m)+'</td>'+
+      '<td>'+rsiHtml(su.rsi_1d)+'</td><td>'+rsiHtml(su.rsi_1w)+'</td><td>'+rsiHtml(su.rsi_1m)+'</td></tr>';}).join(''))
+    || '<tr><td colspan="9" style="padding:20px;text-align:center;color:var(--muted)">No indices for this cap tier.</td></tr>';
+  E(p.pfx+'-tbody').querySelectorAll('tr[data-group]').forEach(tr=>tr.onclick=()=>selectGroup(p,tr.dataset.group));
+  if(p.group) E(p.pfx+'-tbody').querySelectorAll('tr').forEach(tr=>tr.classList.toggle('sel',tr.dataset.group===p.group));
+}
+function buildIdxSelector(p){ const rows=groupList(p);
+  E(p.pfx+'-sel').innerHTML=rows.map(s=>'<option value="'+esc(s.name)+'">'+esc(s.name)+'</option>').join('');
+  if(rows.length){ if(!p.group || !p.bundle.groups[p.group] || !p.bundle.groups[p.group][p.tier]) p.group=rows[0].name; E(p.pfx+'-sel').value=p.group; }
+  else p.group=null; }
+function selectGroup(p,name){ p.group=name; const sel=E(p.pfx+'-sel'); if(sel) sel.value=name;
+  E(p.pfx+'-tbody').querySelectorAll('tr').forEach(tr=>tr.classList.toggle('sel',tr.dataset.group===name)); renderIdxChart(p); buildConstituents(p); }
+function buildConstituents(p){
+  const cols=['Company','MCap Cr','% 1D','% 1W','% 1M','RSI 1D','RSI 1W','RSI 1M'];
+  E(p.pfx+'-cons-h').innerHTML=cols.map((c,i)=>'<th class="'+(i===0?'l':'')+'">'+c+'</th>').join('');
+  if(!p.group){ E(p.pfx+'-cons-b').innerHTML=''; E(p.pfx+'-cons-title').textContent='Constituents'; return; }
+  const rows=DATA.filter(d=>d[p.field]===p.group && d.market_cap_cr!=null && d.market_cap_cr>=2000 && (p.tier==='All'||capOf(d.market_cap_cr)===p.tier))
+                 .sort((a,b)=>(b.market_cap_cr||0)-(a.market_cap_cr||0));
+  E(p.pfx+'-cons-title').textContent=p.group+' — '+rows.length+' constituent'+(rows.length===1?'':'s')+' ('+p.tier+' cap)';
+  E(p.pfx+'-cons-b').innerHTML=rows.map(d=>'<tr data-isin="'+esc(d.isin)+'"><td class="l">'+esc(d.company)+'</td>'+
+    '<td>'+Number(d.market_cap_cr).toLocaleString('en-IN')+'</td>'+
+    '<td>'+chgHtml(d.chg_1d)+'</td><td>'+chgHtml(d.chg_1w)+'</td><td>'+chgHtml(d.chg_1m)+'</td>'+
+    '<td>'+rsiHtml(d.rsi_1d)+'</td><td>'+rsiHtml(d.rsi_1w)+'</td><td>'+rsiHtml(d.rsi_1m)+'</td></tr>').join('')
+    || '<tr><td colspan="8" style="padding:16px;text-align:center;color:var(--muted)">No constituents.</td></tr>';
+  E(p.pfx+'-cons-b').querySelectorAll('tr[data-isin]').forEach(tr=>tr.onclick=()=>{const d=DATA.find(x=>x.isin===tr.dataset.isin); if(d) openModal(d);});
+}
+function setTier(p,tier){ p.tier=tier; buildIdxTable(p); buildIdxSelector(p); if(p.group) selectGroup(p,p.group); else renderIdxChart(p); }
+
+function renderIdxChart(p){
+  if(!p.group || !p.bundle.groups[p.group] || !p.bundle.groups[p.group][p.tier]){ if(p.chart) p.chart.clear(); return; }
+  const g=p.bundle.groups[p.group][p.tier];
+  const el=E(p.pfx+'-chart');
   if(!window.echarts){ el.innerHTML='<div style="padding:30px;color:var(--muted)">Chart library failed to load (offline?).</div>'; return; }
-  if(!chart) chart=echarts.init(el);
-  const d=SECTORS.sectors[curSector].tf[curTf];
-  if(!d){ chart.clear(); return; }
+  if(!p.chart) p.chart=echarts.init(el);
+  const d=g.tf[p.tf]; if(!d){ p.chart.clear(); return; }
   const ink=themeInk(), line=themeLine();
-  const showMA=document.getElementById('ind-ma').checked, showBB=document.getElementById('ind-bb').checked;
+  const showMA=E(p.pfx+'-ma').checked, showBB=E(p.pfx+'-bb').checked;
   const candles=d.c.map((c,i)=>[d.o[i],d.c[i],d.l[i],d.h[i]]);
   const series=[{name:'Index',type:'candlestick',data:candles,xAxisIndex:0,yAxisIndex:0,
      itemStyle:{color:'#0f9d58',color0:'#d93025',borderColor:'#0f9d58',borderColor0:'#d93025'}}];
-  if(showMA) (SECTORS.ma_periods||[7,21,50,220]).forEach(p=>{ if(d['ma'+p]) series.push({name:'MA'+p,type:'line',data:d['ma'+p],xAxisIndex:0,yAxisIndex:0,showSymbol:false,smooth:true,lineStyle:{width:1.3,color:MA_COLORS['ma'+p]},itemStyle:{color:MA_COLORS['ma'+p]}}); });
+  if(showMA)(p.bundle.ma_periods||[7,21,50,220]).forEach(q=>{ if(d['ma'+q]) series.push({name:'MA'+q,type:'line',data:d['ma'+q],xAxisIndex:0,yAxisIndex:0,showSymbol:false,smooth:true,lineStyle:{width:1.3,color:MA_COLORS['ma'+q]},itemStyle:{color:MA_COLORS['ma'+q]}}); });
   if(showBB && d.bb_up){ series.push({name:'BB',type:'line',data:d.bb_up,xAxisIndex:0,yAxisIndex:0,showSymbol:false,lineStyle:{width:1,type:'dashed',color:'#9aa0a6'},itemStyle:{color:'#9aa0a6'}});
      series.push({name:'BB low',type:'line',data:d.bb_low,xAxisIndex:0,yAxisIndex:0,showSymbol:false,lineStyle:{width:1,type:'dashed',color:'#9aa0a6'},itemStyle:{color:'#9aa0a6'},tooltip:{show:false}}); }
   series.push({name:'RSI',type:'line',data:d.rsi,xAxisIndex:1,yAxisIndex:1,showSymbol:false,lineStyle:{width:1.4,color:'#1a73e8'},itemStyle:{color:'#1a73e8'},
      markLine:{symbol:'none',silent:true,data:[{yAxis:60,lineStyle:{color:'#0f9d58',type:'dashed'}},{yAxis:40,lineStyle:{color:'#d93025',type:'dashed'}}]}});
-  chart.setOption({ animation:false, textStyle:{color:ink},
-    legend:{top:2,textStyle:{color:ink}},
+  p.chart.setOption({ animation:false, textStyle:{color:ink}, legend:{top:2,textStyle:{color:ink}},
     tooltip:{trigger:'axis',axisPointer:{type:'cross'}}, axisPointer:{link:[{xAxisIndex:'all'}]},
     grid:[{left:56,right:16,top:34,height:'60%'},{left:56,right:16,top:'74%',height:'18%'}],
     xAxis:[{type:'category',data:d.dates,gridIndex:0,axisLabel:{show:false},axisLine:{lineStyle:{color:line}}},
@@ -536,14 +603,20 @@ function renderChart(){
            {gridIndex:1,min:0,max:100,interval:20,axisLabel:{color:ink},splitLine:{lineStyle:{color:line,opacity:.4}}}],
     dataZoom:[{type:'inside',xAxisIndex:[0,1],start:55,end:100},{type:'slider',xAxisIndex:[0,1],start:55,end:100,bottom:2,height:16}],
     series:series }, true);
-  const su=SECTORS.sectors[curSector].summary;
-  document.getElementById('chart-info').textContent=SECTORS.sectors[curSector].constituents+' constituents · level '+su.level;
+  E(p.pfx+'-info').textContent=g.constituents+' constituents · level '+g.summary.level;
 }
-function showPage(p){
-  document.getElementById('page1').hidden=(p!=='1');
-  document.getElementById('page2').hidden=(p!=='2');
-  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.page===p));
-  if(p==='2') ensureSectors().then(()=>{ if(!curSector){const l=secList(); if(l.length) curSector=l[0].name;} if(curSector) selectSector(curSector); setTimeout(()=>{if(chart)chart.resize();},40); });
+function wireIdx(p){
+  E(p.pfx+'-cap').onchange=e=>setTier(p,e.target.value);
+  E(p.pfx+'-sel').onchange=e=>selectGroup(p,e.target.value);
+  E(p.pfx+'-tf').querySelectorAll('button').forEach(b=>b.onclick=()=>{p.tf=b.dataset.tf; E(p.pfx+'-tf').querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b)); renderIdxChart(p);});
+  E(p.pfx+'-ma').onchange=()=>renderIdxChart(p);
+  E(p.pfx+'-bb').onchange=()=>renderIdxChart(p);
+}
+function showPage(pg){
+  ['1','2','3'].forEach(n=>{ const el=E('page'+n); if(el) el.hidden=(n!==pg); });
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.page===pg));
+  const p = pg==='2'?IDX.sec : pg==='3'?IDX.ind : null;
+  if(p) ensureIdx(p).then(()=>{ if(p.group) selectGroup(p,p.group); setTimeout(()=>{if(p.chart)p.chart.resize();},40); });
 }
 
 function boot(){
@@ -551,14 +624,15 @@ function boot(){
   NEW=new Set(META.new_isins||[]);
   DATA.forEach(d=>d.is_new=NEW.has(d.isin));
   buildTop(); buildHead(); render();
-  ['q','fSig','fNew','fStrong','fCross'].forEach(id=>{const el=document.getElementById(id);
-    el.addEventListener(el.type==='checkbox'?'change':'input',render);});
+  ['q','fSig','fNew','fStrong','fCross','fCap'].forEach(id=>{const el=document.getElementById(id);
+    el.addEventListener((el.type==='checkbox'||el.tagName==='SELECT')?'change':'input',render);});
   [['fSig','chSig'],['fNew','chNew'],['fStrong','chStrong'],['fCross','chCross']].forEach(([f,c])=>{
     document.getElementById(f).addEventListener('change',()=>document.getElementById(c).classList.toggle('on',document.getElementById(f).checked));
   });
   document.getElementById('reset').onclick=()=>{
     for(const k in filters) delete filters[k];
     document.getElementById('q').value='';
+    document.getElementById('fCap').value='';
     ['fSig','fNew','fStrong','fCross'].forEach(id=>{document.getElementById(id).checked=false;});
     ['chSig','chNew','chStrong','chCross'].forEach(id=>document.getElementById(id).classList.remove('on'));
     buildHead(); render();
@@ -568,13 +642,10 @@ function boot(){
   document.addEventListener('keydown',e=>{if(e.key==='Escape') closeModal();});
   if(REFRESH_PROXY_URL) document.getElementById('refresh-btn').hidden=false;
   initCounter();
-  // page 2 wiring
+  // page 2 & 3 (sector / industry index) wiring
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>showPage(t.dataset.page));
-  document.getElementById('sec-sel').onchange=e=>selectSector(e.target.value);
-  document.querySelectorAll('#tf-btns button').forEach(b=>b.onclick=()=>{curTf=b.dataset.tf; document.querySelectorAll('#tf-btns button').forEach(x=>x.classList.toggle('on',x===b)); renderChart();});
-  document.getElementById('ind-ma').onchange=renderChart;
-  document.getElementById('ind-bb').onchange=renderChart;
-  window.addEventListener('resize',()=>{ if(chart && !document.getElementById('page2').hidden) chart.resize(); });
+  wireIdx(IDX.sec); wireIdx(IDX.ind);
+  window.addEventListener('resize',()=>{ [IDX.sec,IDX.ind].forEach(p=>{ if(p.chart && !E(p.page).hidden) p.chart.resize(); }); });
 }
 (window.__LOAD__||Promise.resolve()).then(boot).catch(e=>{document.getElementById('loading').textContent='Failed to load data.json: '+e;});
 </script>

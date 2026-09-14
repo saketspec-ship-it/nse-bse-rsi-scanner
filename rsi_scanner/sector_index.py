@@ -23,7 +23,20 @@ MA_PERIODS = [7, 21, 50, 220]
 BB_PERIOD = 20
 BB_K = 2.0
 MIN_CONSTITUENTS = 3
-WINDOW = {"1D": 500, "1W": 300, "1M": 120}   # bars kept per timeframe for charts
+WINDOW = {"1D": 320, "1W": 200, "1M": 110}   # bars kept per timeframe for charts
+
+# Cap tiers used to slice each index (Micro < 2,000 Cr is below the index floor).
+CAP_TIERS = ["All", "Large", "Mid", "Small"]
+
+
+def cap_tier(mcap_cr: float) -> str | None:
+    if mcap_cr >= 20000:
+        return "Large"
+    if mcap_cr >= 5000:
+        return "Mid"
+    if mcap_cr >= 2000:
+        return "Small"
+    return None
 
 
 def _round_list(s: pd.Series, nd: int = 2) -> list:
@@ -117,75 +130,96 @@ def _pct(series: pd.Series, n: int) -> float | None:
     return round((s.iloc[-1] / s.iloc[-1 - n] - 1) * 100, 2)
 
 
-def build_sector_indices(cfg, results, frames, min_mcap_cr: float = 2000.0) -> dict:
-    """Return the sector-index bundle for the dashboard's page 2."""
+def _build_one(cfg, frames, constituents: list[tuple[str, float]]) -> dict | None:
+    """Build one index (constituents = list of (ticker, mcap_cr))."""
     wrule = cfg.get("candles", "weekly_rule", default="W-FRI")
     mrule = cfg.get("candles", "monthly_rule", default="ME")
+    daily = _index_daily_ohlc(frames, [(t, m) for t, m in constituents])
+    if daily is None or len(daily) < 60:
+        return None
 
-    # Group qualifying constituents by sector.
+    tf, latest_close = {}, None
+    for name, candles in (("1D", daily),
+                          ("1W", resample_ohlc(daily, wrule)),
+                          ("1M", resample_ohlc(daily, mrule))):
+        if len(candles) < 15:
+            continue
+        full = _indicators(candles)
+        keep = min(len(candles), WINDOW.get(name, 300))
+        tf[name] = {k: (v[-keep:] if isinstance(v, list) else v) for k, v in full.items()}
+        if name == "1D":
+            latest_close = candles["Close"]
+    if "1D" not in tf:
+        return None
+
+    def rsi_last(nm):
+        for v in reversed(tf.get(nm, {}).get("rsi") or []):
+            if v is not None:
+                return v
+        return None
+
+    return {
+        "constituents": len(constituents),
+        "mcap_cr": round(sum(m for _, m in constituents), 0),
+        "summary": {
+            "level": round(float(latest_close.iloc[-1]), 2),
+            "chg_1d": _pct(latest_close, 1),
+            "chg_1w": _pct(latest_close, 5),
+            "chg_1m": _pct(latest_close, 21),
+            "rsi_1d": rsi_last("1D"), "rsi_1w": rsi_last("1W"), "rsi_1m": rsi_last("1M"),
+        },
+        "tf": tf,
+    }
+
+
+def build_indices(cfg, results, frames, group_field: str,
+                  min_mcap_cr: float = 2000.0, max_groups: int = 0) -> dict:
+    """Build cap-tiered indices grouped by ``group_field`` ('sector'/'industry').
+
+    Each group carries per-cap-tier sub-indices ("All"/"Large"/"Mid"/"Small";
+    only tiers with >= MIN_CONSTITUENTS constituents are kept).
+    """
     groups: dict[str, list[tuple[str, float]]] = {}
-    mcaps: dict[str, float] = {}
     for r in results:
-        if not r.sector or r.sector == "Unknown":
+        val = getattr(r, group_field, None)
+        if not val or val == "Unknown":
             continue
-        if not r.market_cap_cr or r.market_cap_cr < min_mcap_cr:
+        if not r.market_cap_cr or r.market_cap_cr < min_mcap_cr or not r.yahoo_ticker:
             continue
-        if not r.yahoo_ticker:
-            continue
-        groups.setdefault(r.sector, []).append((r.yahoo_ticker, r.market_cap_cr))
-        mcaps[r.sector] = mcaps.get(r.sector, 0.0) + r.market_cap_cr
+        groups.setdefault(val, []).append((r.yahoo_ticker, float(r.market_cap_cr)))
 
-    sectors_out = {}
-    for sector, cons in groups.items():
-        daily = _index_daily_ohlc(frames, cons)
-        if daily is None or len(daily) < 60:
-            continue
+    # Optionally keep only the largest groups (keeps industries.json bounded).
+    if max_groups and len(groups) > max_groups:
+        ranked = sorted(groups.items(), key=lambda kv: -sum(m for _, m in kv[1]))
+        groups = dict(ranked[:max_groups])
 
-        tf = {}
-        latest_close = None
-        for name, candles in (("1D", daily),
-                              ("1W", resample_ohlc(daily, wrule)),
-                              ("1M", resample_ohlc(daily, mrule))):
-            if len(candles) < 15:
+    out: dict[str, dict] = {}
+    for name, cons in groups.items():
+        tiers_out = {}
+        for tier in CAP_TIERS:
+            if tier == "All":
+                sub = cons
+            else:
+                sub = [(t, m) for t, m in cons if cap_tier(m) == tier]
+            if len(sub) < MIN_CONSTITUENTS:
                 continue
-            cutoff = WINDOW.get(name, 400)
-            trimmed = candles.tail(cutoff)
-            # RSI/MA computed on the FULL series then trimmed, so warm-up is correct.
-            full = _indicators(candles)
-            keep = len(trimmed)
-            tf[name] = {k: (v[-keep:] if isinstance(v, list) else v) for k, v in full.items()}
-            if name == "1D":
-                latest_close = candles["Close"]
-
-        if "1D" not in tf:
-            continue
-
-        def rsi_last(name):
-            arr = tf.get(name, {}).get("rsi") or []
-            for v in reversed(arr):
-                if v is not None:
-                    return v
-            return None
-
-        sectors_out[sector] = {
-            "constituents": len(cons),
-            "mcap_cr": round(mcaps[sector], 0),
-            "summary": {
-                "level": round(float(latest_close.iloc[-1]), 2),
-                "chg_1d": _pct(latest_close, 1),
-                "chg_1w": _pct(latest_close, 5),
-                "chg_1m": _pct(latest_close, 21),
-                "rsi_1d": rsi_last("1D"),
-                "rsi_1w": rsi_last("1W"),
-                "rsi_1m": rsi_last("1M"),
-            },
-            "tf": tf,
-        }
+            built = _build_one(cfg, frames, sub)
+            if built:
+                tiers_out[tier] = built
+        if tiers_out:
+            out[name] = tiers_out
 
     return {
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "min_mcap_cr": min_mcap_cr,
         "ma_periods": MA_PERIODS,
         "bb": [BB_PERIOD, BB_K],
-        "sectors": sectors_out,
+        "group_field": group_field,
+        "tiers": CAP_TIERS,
+        "groups": out,
     }
+
+
+def build_sector_indices(cfg, results, frames, min_mcap_cr: float = 2000.0) -> dict:
+    """Back-compat wrapper: sector-grouped indices."""
+    return build_indices(cfg, results, frames, "sector", min_mcap_cr)
