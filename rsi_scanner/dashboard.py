@@ -57,18 +57,21 @@ def build_meta(cfg: Config, recon: dict, scanned: int, backtest_summary: dict | 
     }
 
 
-def render_embedded(cfg, results, recon, scanned, backtest_summary=None) -> str:
+def render_embedded(cfg, results, recon, scanned, backtest_summary=None, sectors=None) -> str:
     data = json.dumps(build_payload(results))
     meta = json.dumps(build_meta(cfg, recon, scanned, backtest_summary, results))
-    loader = f"<script>window.__META__={meta};window.__DATA__={data};</script>"
+    sec = json.dumps(sectors or {})
+    loader = f"<script>window.__META__={meta};window.__DATA__={data};window.__SECTORS__={sec};</script>"
     return _SHELL.replace("<!--DATA_LOADER-->", loader)
 
 
-def write_site(cfg, out_dir, results, recon, scanned, backtest_summary=None) -> str:
-    """Write index.html + data.json + meta.json into ``out_dir`` (a Path)."""
+def write_site(cfg, out_dir, results, recon, scanned, backtest_summary=None, sectors=None) -> str:
+    """Write index.html + data.json + meta.json + sectors.json into ``out_dir``."""
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "data.json").write_text(json.dumps(build_payload(results)), encoding="utf-8")
     (out_dir / "meta.json").write_text(json.dumps(build_meta(cfg, recon, scanned, backtest_summary, results)), encoding="utf-8")
+    (out_dir / "sectors.json").write_text(json.dumps(sectors or {}), encoding="utf-8")
+    # sectors.json is fetched lazily when the Sector Indices tab is first opened.
     loader = (
         "<script>"
         "window.__LOAD__=Promise.all(["
@@ -83,8 +86,8 @@ def write_site(cfg, out_dir, results, recon, scanned, backtest_summary=None) -> 
 
 
 # Back-compat: scan.py may still call render().
-def render(cfg, results, recon, scanned, backtest_summary=None) -> str:
-    return render_embedded(cfg, results, recon, scanned, backtest_summary)
+def render(cfg, results, recon, scanned, backtest_summary=None, sectors=None) -> str:
+    return render_embedded(cfg, results, recon, scanned, backtest_summary, sectors)
 
 
 _SHELL = r"""<!doctype html>
@@ -132,6 +135,19 @@ button.reset{background:transparent;border:1px solid var(--line);color:var(--mut
 .toolbar button:disabled{opacity:.5;cursor:default}
 #refresh-status{font-size:12px;color:var(--muted)}
 #visitor-counts{font-size:12px;color:var(--muted);margin:2px 0 8px}
+.tabs{display:flex;gap:4px;margin:12px 0 2px;border-bottom:1px solid var(--line)}
+.tab{background:transparent;border:none;border-bottom:2px solid transparent;color:var(--muted);padding:8px 16px;cursor:pointer;font-size:14px;font-weight:600}
+.tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+.chartctl{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin:12px 0}
+.chartctl label{font-size:13px;color:var(--muted)}
+.chartctl select{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:13px}
+.tfbtns button{background:var(--card);color:var(--ink);border:1px solid var(--line);padding:5px 13px;cursor:pointer;font-size:13px;margin:0}
+.tfbtns button:first-child{border-radius:8px 0 0 8px}.tfbtns button:last-child{border-radius:0 8px 8px 0}
+.tfbtns button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+#chart{width:100%;height:520px;background:var(--card);border:1px solid var(--line);border-radius:10px;margin-top:6px}
+#sectbl tbody tr:hover{background:var(--blu-bg);cursor:pointer}
+#sectbl tbody tr.sel{background:var(--blu-bg)}
+.up{color:var(--grn)}.dn{color:#d93025}
 .tablewrap{overflow:auto;max-height:calc(100vh - 150px);border:1px solid var(--line);border-radius:10px;background:var(--card);box-shadow:var(--shadow)}
 table{border-collapse:collapse;width:100%;font-size:13px;min-width:1180px}
 th,td{padding:7px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
@@ -170,6 +186,13 @@ footer{margin-top:22px;color:var(--muted);font-size:12px}
   <h1>NSE + BSE RSI Momentum Scanner</h1>
   <div class="sub" id="sub">Loading…</div>
 </header>
+
+<nav class="tabs">
+  <button class="tab on" data-page="1">&#128202; Stocks</button>
+  <button class="tab" data-page="2">&#127981; Sector Indices</button>
+</nav>
+
+<div id="page1">
 <div class="cond" id="cond"></div>
 <div class="tiles" id="tiles"></div>
 
@@ -202,6 +225,29 @@ footer{margin-top:22px;color:var(--muted);font-size:12px}
 </table>
 </div>
 
+</div><!-- /page1 -->
+
+<div id="page2" hidden>
+  <div class="cond">Sector momentum indices &mdash; market-cap weighted, rebased to 100. Constituents: stocks with market cap &ge; &#8377;2,000 Cr and a known sector.
+    <small>Timeframes 1D / 1W / 1M &middot; indicators: RSI(14), SMA 7/21/50/220, Bollinger Bands(20,2). Click a sector row, or use the selector below the table.</small>
+  </div>
+  <div class="tablewrap" style="max-height:none">
+    <table id="sectbl">
+      <thead><tr id="sec-hrow"></tr></thead>
+      <tbody id="sec-tbody"><tr><td id="sec-loading" colspan="9" style="padding:20px;text-align:center;color:var(--muted)">Loading sector indices…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="chartctl">
+    <label>Sector <select id="sec-sel"></select></label>
+    <span class="tfbtns" id="tf-btns"><button data-tf="1D">1D</button><button data-tf="1W">1W</button><button data-tf="1M" class="on">1M</button></span>
+    <label><input type="checkbox" id="ind-ma" checked> Moving averages</label>
+    <label><input type="checkbox" id="ind-bb" checked> Bollinger bands</label>
+    <span class="tag" id="chart-info"></span>
+  </div>
+  <div id="chart"></div>
+  <div style="font-size:12px;color:var(--muted);margin-top:6px">MA/SMA periods are in the selected timeframe's bars (e.g. on 1D they are 7/21/50/220 days). Index = cap-weighted average of constituent returns; not an official exchange index.</div>
+</div>
+
 <div class="disc">
   <strong>Disclaimer.</strong> Technical screening &amp; alert system, <b>not investment advice</b>.
   An RSI signal alone is not a buy/sell recommendation. RSI uses Wilder's method on split/bonus-adjusted
@@ -222,6 +268,7 @@ footer{margin-top:22px;color:var(--muted);font-size:12px}
 
 <div class="modal" id="modal"><div class="box" id="mbox"></div></div>
 
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
 <!--DATA_LOADER-->
 <script>
 const COLS=[
@@ -431,6 +478,74 @@ function initCounter(){ if(!GOATCOUNTER) return; const d=todayStr();
   rec(GC+'-lifetime'); rec(GC+'-daily/'+d);
   show(GC+'-lifetime','vc-total'); show(GC+'-daily/'+d,'vc-today'); show(GC+'-download','vc-downloads'); }
 
+// ---- page 2: sector indices ---------------------------------------------
+let SECTORS=null, chart=null, curSector=null, curTf='1M', sectorsReady=false;
+const MA_COLORS={ma7:'#f4b400',ma21:'#4285f4',ma50:'#db4437',ma220:'#7c3aed'};
+function themeInk(){ return getComputedStyle(document.body).color; }
+function themeLine(){ return getComputedStyle(document.documentElement).getPropertyValue('--line').trim()||'#ccc'; }
+
+async function ensureSectors(){
+  if(sectorsReady) return;
+  SECTORS=(window.__SECTORS__&&window.__SECTORS__.sectors)?window.__SECTORS__:null;
+  if(!SECTORS){ try{ SECTORS=await fetch('sectors.json').then(r=>r.json()); }catch(e){ SECTORS={sectors:{}}; } }
+  if(!SECTORS.sectors) SECTORS.sectors={};
+  sectorsReady=true; buildSectorTable(); buildSectorSelector();
+}
+function secList(){ const s=SECTORS.sectors||{}; return Object.keys(s).map(k=>Object.assign({name:k},s[k])).sort((a,b)=>b.mcap_cr-a.mcap_cr); }
+function chgHtml(v){ if(v==null) return '<span class=muted>–</span>'; return '<span class="'+(v>=0?'up':'dn')+'">'+(v>=0?'+':'')+v.toFixed(2)+'%</span>'; }
+function rsiHtml(v){ return v==null?'<span class=muted>–</span>':v.toFixed(1); }
+function buildSectorTable(){
+  const cols=['Sector','#','MCap Cr','% 1D','% 1W','% 1M','RSI 1D','RSI 1W','RSI 1M'];
+  document.getElementById('sec-hrow').innerHTML=cols.map((c,i)=>'<th class="'+(i===0?'l':'')+'">'+c+'</th>').join('');
+  document.getElementById('sec-tbody').innerHTML=secList().map(s=>{const su=s.summary||{};
+    return '<tr data-sector="'+esc(s.name)+'"><td class="l">'+esc(s.name)+'</td><td>'+s.constituents+'</td>'+
+      '<td>'+Number(s.mcap_cr).toLocaleString('en-IN')+'</td><td>'+chgHtml(su.chg_1d)+'</td><td>'+chgHtml(su.chg_1w)+'</td><td>'+chgHtml(su.chg_1m)+'</td>'+
+      '<td>'+rsiHtml(su.rsi_1d)+'</td><td>'+rsiHtml(su.rsi_1w)+'</td><td>'+rsiHtml(su.rsi_1m)+'</td></tr>';}).join('')
+    || '<tr><td colspan="9" style="padding:20px;text-align:center;color:var(--muted)">No sector indices (need stocks ≥₹2,000 Cr with known sectors).</td></tr>';
+  document.querySelectorAll('#sec-tbody tr[data-sector]').forEach(tr=>tr.onclick=()=>selectSector(tr.dataset.sector));
+}
+function buildSectorSelector(){ const rows=secList();
+  document.getElementById('sec-sel').innerHTML=rows.map(s=>'<option value="'+esc(s.name)+'">'+esc(s.name)+'</option>').join('');
+  if(rows.length && !curSector) curSector=rows[0].name; }
+function selectSector(name){ curSector=name; const sel=document.getElementById('sec-sel'); if(sel) sel.value=name;
+  document.querySelectorAll('#sec-tbody tr').forEach(tr=>tr.classList.toggle('sel',tr.dataset.sector===name)); renderChart(); }
+function renderChart(){
+  if(!curSector||!SECTORS.sectors[curSector]) return;
+  const el=document.getElementById('chart');
+  if(!window.echarts){ el.innerHTML='<div style="padding:30px;color:var(--muted)">Chart library failed to load (offline?).</div>'; return; }
+  if(!chart) chart=echarts.init(el);
+  const d=SECTORS.sectors[curSector].tf[curTf];
+  if(!d){ chart.clear(); return; }
+  const ink=themeInk(), line=themeLine();
+  const showMA=document.getElementById('ind-ma').checked, showBB=document.getElementById('ind-bb').checked;
+  const candles=d.c.map((c,i)=>[d.o[i],d.c[i],d.l[i],d.h[i]]);
+  const series=[{name:'Index',type:'candlestick',data:candles,xAxisIndex:0,yAxisIndex:0,
+     itemStyle:{color:'#0f9d58',color0:'#d93025',borderColor:'#0f9d58',borderColor0:'#d93025'}}];
+  if(showMA) (SECTORS.ma_periods||[7,21,50,220]).forEach(p=>{ if(d['ma'+p]) series.push({name:'MA'+p,type:'line',data:d['ma'+p],xAxisIndex:0,yAxisIndex:0,showSymbol:false,smooth:true,lineStyle:{width:1.3,color:MA_COLORS['ma'+p]},itemStyle:{color:MA_COLORS['ma'+p]}}); });
+  if(showBB && d.bb_up){ series.push({name:'BB',type:'line',data:d.bb_up,xAxisIndex:0,yAxisIndex:0,showSymbol:false,lineStyle:{width:1,type:'dashed',color:'#9aa0a6'},itemStyle:{color:'#9aa0a6'}});
+     series.push({name:'BB low',type:'line',data:d.bb_low,xAxisIndex:0,yAxisIndex:0,showSymbol:false,lineStyle:{width:1,type:'dashed',color:'#9aa0a6'},itemStyle:{color:'#9aa0a6'},tooltip:{show:false}}); }
+  series.push({name:'RSI',type:'line',data:d.rsi,xAxisIndex:1,yAxisIndex:1,showSymbol:false,lineStyle:{width:1.4,color:'#1a73e8'},itemStyle:{color:'#1a73e8'},
+     markLine:{symbol:'none',silent:true,data:[{yAxis:60,lineStyle:{color:'#0f9d58',type:'dashed'}},{yAxis:40,lineStyle:{color:'#d93025',type:'dashed'}}]}});
+  chart.setOption({ animation:false, textStyle:{color:ink},
+    legend:{top:2,textStyle:{color:ink}},
+    tooltip:{trigger:'axis',axisPointer:{type:'cross'}}, axisPointer:{link:[{xAxisIndex:'all'}]},
+    grid:[{left:56,right:16,top:34,height:'60%'},{left:56,right:16,top:'74%',height:'18%'}],
+    xAxis:[{type:'category',data:d.dates,gridIndex:0,axisLabel:{show:false},axisLine:{lineStyle:{color:line}}},
+           {type:'category',data:d.dates,gridIndex:1,axisLabel:{color:ink,fontSize:10},axisLine:{lineStyle:{color:line}}}],
+    yAxis:[{scale:true,gridIndex:0,axisLabel:{color:ink},splitLine:{lineStyle:{color:line,opacity:.4}}},
+           {gridIndex:1,min:0,max:100,interval:20,axisLabel:{color:ink},splitLine:{lineStyle:{color:line,opacity:.4}}}],
+    dataZoom:[{type:'inside',xAxisIndex:[0,1],start:55,end:100},{type:'slider',xAxisIndex:[0,1],start:55,end:100,bottom:2,height:16}],
+    series:series }, true);
+  const su=SECTORS.sectors[curSector].summary;
+  document.getElementById('chart-info').textContent=SECTORS.sectors[curSector].constituents+' constituents · level '+su.level;
+}
+function showPage(p){
+  document.getElementById('page1').hidden=(p!=='1');
+  document.getElementById('page2').hidden=(p!=='2');
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.page===p));
+  if(p==='2') ensureSectors().then(()=>{ if(!curSector){const l=secList(); if(l.length) curSector=l[0].name;} if(curSector) selectSector(curSector); setTimeout(()=>{if(chart)chart.resize();},40); });
+}
+
 function boot(){
   DATA=window.__DATA__||[]; META=window.__META__||{};
   NEW=new Set(META.new_isins||[]);
@@ -453,6 +568,13 @@ function boot(){
   document.addEventListener('keydown',e=>{if(e.key==='Escape') closeModal();});
   if(REFRESH_PROXY_URL) document.getElementById('refresh-btn').hidden=false;
   initCounter();
+  // page 2 wiring
+  document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>showPage(t.dataset.page));
+  document.getElementById('sec-sel').onchange=e=>selectSector(e.target.value);
+  document.querySelectorAll('#tf-btns button').forEach(b=>b.onclick=()=>{curTf=b.dataset.tf; document.querySelectorAll('#tf-btns button').forEach(x=>x.classList.toggle('on',x===b)); renderChart();});
+  document.getElementById('ind-ma').onchange=renderChart;
+  document.getElementById('ind-bb').onchange=renderChart;
+  window.addEventListener('resize',()=>{ if(chart && !document.getElementById('page2').hidden) chart.resize(); });
 }
 (window.__LOAD__||Promise.resolve()).then(boot).catch(e=>{document.getElementById('loading').textContent='Failed to load data.json: '+e;});
 </script>

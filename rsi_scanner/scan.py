@@ -29,7 +29,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from . import alerts, backtest, dashboard, datafetch, fundamentals, screener, signals, summary
+from . import alerts, backtest, dashboard, datafetch, fundamentals, screener, sector_index, signals, summary
 from .config import load_config
 from .universe import build_universe, yahoo_ticker
 
@@ -176,15 +176,19 @@ def run(args) -> dict:
         pd.DataFrame(bt_summary["records"]).to_csv(out_dir / "backtest_entries.csv", index=False)
         _log(f"Backtest: {bt_summary['n_records']} historical entries -> {bt_path}")
 
+    _log("Building sector indices (mcap >= 2000 Cr, known sector)...")
+    sectors = sector_index.build_sector_indices(cfg, results, frames)
+    _log(f"Built {len(sectors['sectors'])} sector indices.")
+
     _log("Rendering HTML dashboard...")
-    html = dashboard.render_embedded(cfg, results, recon, scanned=len(results), backtest_summary=bt_summary)
+    html = dashboard.render_embedded(cfg, results, recon, scanned=len(results), backtest_summary=bt_summary, sectors=sectors)
     dash_path = out_dir / "dashboard.html"
     dash_path.write_text(html, encoding="utf-8")
     _log(f"Dashboard (self-contained) -> {dash_path}")
 
     site_dir = cfg.path("site_dir")
-    dashboard.write_site(cfg, site_dir, results, recon, scanned=len(results), backtest_summary=bt_summary)
-    _log(f"Pages site (index.html + data.json) -> {site_dir}")
+    dashboard.write_site(cfg, site_dir, results, recon, scanned=len(results), backtest_summary=bt_summary, sectors=sectors)
+    _log(f"Pages site (index.html + data.json + sectors.json) -> {site_dir}")
 
     print("\n" + summ)
     return {
