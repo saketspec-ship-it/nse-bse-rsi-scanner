@@ -72,6 +72,23 @@ def test_resample_weekly_ohlc():
     assert wk.iloc[0]["Volume"] == 500
 
 
+def test_last_cross_up():
+    from rsi_scanner.screener import _last_cross_up
+    idx = pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31", "2024-04-30"])
+    # Crosses up through 60 between Feb (58) and Mar (63); stays above in Apr.
+    s = pd.Series([55.0, 58.0, 63.0, 65.0], index=idx)
+    days, cdate, months, before = _last_cross_up(s, 60.0, pd.Timestamp("2024-04-30"))
+    assert cdate == "2024-03-31" and months == 1 and before is False
+    assert days == 30
+    # Currently below the level -> no active crossing.
+    s2 = pd.Series([65.0, 62.0, 58.0], index=idx[:3])
+    assert _last_cross_up(s2, 60.0, idx[2])[0] is None
+    # Above for the whole series -> crossing predates the data.
+    s3 = pd.Series([61.0, 62.0, 63.0], index=idx[:3])
+    d, cd, mo, before3 = _last_cross_up(s3, 60.0, idx[2])
+    assert before3 is True and cd == "2024-01-31"
+
+
 def test_drop_incomplete_last_week():
     idx = pd.bdate_range("2024-01-01", periods=10)
     df = pd.DataFrame({"Close": range(10)}, index=idx)

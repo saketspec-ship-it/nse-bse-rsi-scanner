@@ -47,6 +47,9 @@ class ScreenResult:
     momentum_score: float | None = None
     days_in_signal: int | None = None
     signal_since: str | None = None
+    days_since_1m_cross60: int | None = None
+    m1_cross_date: str | None = None
+    months_since_1m_cross60: int | None = None
     market_cap_cr: float | None = None
     mcap_class: str = "Unknown"
     pe: float | None = None
@@ -87,6 +90,8 @@ def compute_rsis(cfg: Config, daily: pd.DataFrame) -> dict:
         "rsi_1d": None, "rsi_1w": None, "rsi_1m": None,
         "prev_1d": None, "prev_1w": None, "prev_1m": None,
         "price": None, "avg_volume": None, "last_date": None,
+        "m1_cross_days": None, "m1_cross_date": None,
+        "m1_cross_months": None, "m1_cross_before_data": False,
         "provisional": False, "flags": flags,
     }
 
@@ -138,9 +143,42 @@ def compute_rsis(cfg: Config, daily: pd.DataFrame) -> dict:
         if len(m_series) >= 2:
             res["rsi_1m"] = _round(m_series.iloc[-1])
             res["prev_1m"] = _round(m_series.iloc[-2])
+            # How recently the MONTHLY RSI last crossed up through the 60 level
+            # (fresh crossings tend to precede the strongest momentum).
+            level = float(cfg.thresholds["monthly_gt"])
+            days, cdate, months, before = _last_cross_up(m_series, level, asof)
+            res["m1_cross_days"] = days
+            res["m1_cross_date"] = cdate
+            res["m1_cross_months"] = months
+            res["m1_cross_before_data"] = before
 
     res["provisional"] = not confirmed_only
     return res
+
+
+def _last_cross_up(series: pd.Series, level: float, asof) -> tuple[int | None, str | None, int | None, bool]:
+    """Days/months since the series last crossed UP through ``level``.
+
+    Returns (calendar_days, crossing_date, months_since, before_data). If the
+    series is currently at/below ``level`` -> all None (no active crossing). If
+    it has been above for the whole available history, the crossing predates the
+    data and ``before_data`` is True (days measured from the first bar).
+    """
+    vals = series.to_numpy()
+    if len(vals) == 0 or vals[-1] <= level:
+        return None, None, None, False
+    cross_i = None
+    for i in range(len(vals) - 1, 0, -1):
+        if vals[i] > level and vals[i - 1] <= level:
+            cross_i = i
+            break
+    before = cross_i is None
+    if before:
+        cross_i = 0
+    cdate = pd.Timestamp(series.index[cross_i])
+    days = int((pd.Timestamp(asof).normalize() - cdate.normalize()).days)
+    months = int((len(vals) - 1) - cross_i)
+    return days, cdate.strftime("%Y-%m-%d"), months, before
 
 
 def evaluate_signal(cfg: Config, rsi_1d, rsi_1w, rsi_1m) -> tuple[bool, str]:
@@ -233,6 +271,8 @@ def screen_security(cfg: Config, sec: dict, daily: pd.DataFrame, fund: dict | No
         rsi_signal=signal, category=category, provisional=rr["provisional"],
         momentum_score=score,
         days_in_signal=days_in_signal, signal_since=signal_since,
+        days_since_1m_cross60=rr["m1_cross_days"], m1_cross_date=rr["m1_cross_date"],
+        months_since_1m_cross60=rr["m1_cross_months"],
         market_cap_cr=fund.get("market_cap_cr"),
         mcap_class=fund.get("mcap_class", "Unknown"),
         pe=fund.get("pe"), pe_type=fund.get("pe_type", "trailing"),

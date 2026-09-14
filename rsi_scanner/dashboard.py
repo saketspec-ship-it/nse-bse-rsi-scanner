@@ -177,7 +177,7 @@ footer{margin-top:22px;color:var(--muted);font-size:12px}
   <tr id="hrow"></tr>
   <tr class="filt" id="frow"></tr>
 </thead>
-<tbody id="tbody"><tr><td id="loading" colspan="14">Loading data…</td></tr></tbody>
+<tbody id="tbody"><tr><td id="loading" colspan="15">Loading data…</td></tr></tbody>
 </table>
 </div>
 
@@ -211,6 +211,7 @@ const COLS=[
  {k:'rsi_1w',label:'RSI 1W',type:'num',align:'r'},
  {k:'rsi_1m',label:'RSI 1M',type:'num',align:'r'},
  {k:'momentum_score',label:'Score',type:'num',align:'r'},
+ {k:'days_since_1m_cross60',label:'Days since 1M>60',type:'num',align:'r'},
  {k:'days_in_signal',label:'Days in Signal',type:'num',align:'r'},
  {k:'category',label:'Signal',type:'cat',align:'l'},
  {k:'last_date',label:'Updated',type:'text',align:'l'},
@@ -283,11 +284,12 @@ function render(){
       '<td>'+fnum(d.rsi_1w,1)+'</td>'+
       '<td>'+fnum(d.rsi_1m,1)+'</td>'+
       '<td>'+fnum(d.momentum_score,1)+'</td>'+
+      '<td>'+(d.days_since_1m_cross60!=null?d.days_since_1m_cross60:'<span class=muted>–</span>')+'</td>'+
       '<td>'+days+'</td>'+
       '<td class="l"><span class="badge '+cls+'">'+(CATEMOJI[d.category]||'')+' '+d.category+'</span>'+prov+'</td>'+
       '<td class="l muted">'+(d.last_date||'–')+'</td></tr>';
   }).join('');
-  tb.innerHTML=frag + (rows.length>3000?'<tr><td class="l muted" colspan="14">… '+(rows.length-3000).toLocaleString('en-IN')+' more rows hidden — filter to narrow.</td></tr>':'');
+  tb.innerHTML=frag + (rows.length>3000?'<tr><td class="l muted" colspan="15">… '+(rows.length-3000).toLocaleString('en-IN')+' more rows hidden — filter to narrow.</td></tr>':'');
 }
 function buildHead(){
   document.getElementById('hrow').innerHTML=COLS.map(c=>{
@@ -335,6 +337,8 @@ function openModal(d){
    R('RSI 1W',(d.rsi_1w!=null?d.rsi_1w.toFixed(1):'–')+trend(d.rsi_1w,d.prev_rsi_1w))+
    R('RSI 1M',(d.rsi_1m!=null?d.rsi_1m.toFixed(1):'–')+trend(d.rsi_1m,d.prev_rsi_1m))+
    R('Momentum Score',d.momentum_score!=null?d.momentum_score:'–')+
+   R('Days since 1M RSI&gt;60',d.days_since_1m_cross60!=null?(d.days_since_1m_cross60+' days'+(d.months_since_1m_cross60!=null?' ('+d.months_since_1m_cross60+' mo)':'')):'—')+
+   R('1M crossed 60 on',esc(d.m1_cross_date||'—'))+
    R('Days in Signal',d.days_in_signal!=null?d.days_in_signal+' trading days':'—')+
    R('In signal since',esc(d.signal_since||'—'))+
    R('Signal',(CATEMOJI[d.category]||'')+' '+esc(d.category))+
