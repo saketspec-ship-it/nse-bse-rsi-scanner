@@ -130,7 +130,7 @@ button.reset{background:transparent;border:1px solid var(--line);color:var(--mut
 .toolbar button:disabled{opacity:.5;cursor:default}
 #refresh-status{font-size:12px;color:var(--muted)}
 #visitor-counts{font-size:12px;color:var(--muted);margin:2px 0 8px}
-.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--card);box-shadow:var(--shadow)}
+.tablewrap{overflow:auto;max-height:calc(100vh - 150px);border:1px solid var(--line);border-radius:10px;background:var(--card);box-shadow:var(--shadow)}
 table{border-collapse:collapse;width:100%;font-size:13px;min-width:1180px}
 th,td{padding:7px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
 th.l,td.l{text-align:left}
