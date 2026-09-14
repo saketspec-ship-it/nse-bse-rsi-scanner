@@ -387,7 +387,7 @@ function closeModal(){document.getElementById('modal').classList.remove('open');
 // Worker URL to reveal the "Refresh scan" button.
 const GOATCOUNTER='https://vcpdash.goatcounter.com';
 const GC='/rsi';
-const REFRESH_PROXY_URL='';
+const REFRESH_PROXY_URL='https://wild-pine-6337rsi-refresh.saket-spec.workers.dev';
 
 const EXPORT_COLS=[
  ['company','Company'],['nse_symbol','NSE'],['bse_code','BSE'],['isin','ISIN'],
