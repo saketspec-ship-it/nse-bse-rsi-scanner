@@ -36,8 +36,9 @@ def build_payload(results: list[ScreenResult]) -> list[dict]:
     return rows
 
 
-def build_meta(cfg: Config, recon: dict, scanned: int, backtest_summary: dict | None) -> dict:
+def build_meta(cfg: Config, recon: dict, scanned: int, backtest_summary: dict | None, results=None) -> dict:
     th = cfg.thresholds
+    n_crossover = sum(1 for r in (results or []) if getattr(r, "pure_crossover_1m", False))
     return {
         "timestamp": recon["timestamp"],
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -46,6 +47,7 @@ def build_meta(cfg: Config, recon: dict, scanned: int, backtest_summary: dict | 
         "n_new": len(recon["new"]),
         "n_exited": len(recon["exited"]),
         "n_strong": len(recon["strong"]),
+        "n_crossover": n_crossover,
         "new_isins": [r.isin for r in recon["new"]],
         "thresholds": {k: float(v) for k, v in th.items()},
         "confirmed_only": bool(cfg.get("candles", "confirmed_only", default=True)),
@@ -55,7 +57,7 @@ def build_meta(cfg: Config, recon: dict, scanned: int, backtest_summary: dict | 
 
 def render_embedded(cfg, results, recon, scanned, backtest_summary=None) -> str:
     data = json.dumps(build_payload(results))
-    meta = json.dumps(build_meta(cfg, recon, scanned, backtest_summary))
+    meta = json.dumps(build_meta(cfg, recon, scanned, backtest_summary, results))
     loader = f"<script>window.__META__={meta};window.__DATA__={data};</script>"
     return _SHELL.replace("<!--DATA_LOADER-->", loader)
 
@@ -64,7 +66,7 @@ def write_site(cfg, out_dir, results, recon, scanned, backtest_summary=None) -> 
     """Write index.html + data.json + meta.json into ``out_dir`` (a Path)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "data.json").write_text(json.dumps(build_payload(results)), encoding="utf-8")
-    (out_dir / "meta.json").write_text(json.dumps(build_meta(cfg, recon, scanned, backtest_summary)), encoding="utf-8")
+    (out_dir / "meta.json").write_text(json.dumps(build_meta(cfg, recon, scanned, backtest_summary, results)), encoding="utf-8")
     loader = (
         "<script>"
         "window.__LOAD__=Promise.all(["
@@ -135,6 +137,7 @@ tbody tr:hover{background:var(--blu-bg);cursor:pointer}
 .b-strong{background:var(--blu-bg);color:var(--blu)}.b-primary{background:var(--grn-bg);color:var(--grn)}
 .b-watch{background:var(--yel-bg);color:var(--yel)}.b-none{background:var(--red-bg);color:var(--red)}
 .b-insuff{background:var(--red-bg);color:var(--gry)}
+.b-cross{background:transparent;color:var(--accent);border:1px solid var(--accent);font-weight:700}
 .new-dot{color:var(--grn);font-weight:700}.prov{color:var(--yel);font-size:11px}
 .muted{color:var(--muted)}.sortarrow{font-size:10px;opacity:.7}
 .days{font-weight:600}.rsi-ok{color:var(--grn);font-weight:600}
@@ -167,6 +170,7 @@ footer{margin-top:22px;color:var(--muted);font-size:12px}
   <span class="chip" id="chSig"><input type="checkbox" id="fSig"> Signal only</span>
   <span class="chip" id="chNew"><input type="checkbox" id="fNew"> New only</span>
   <span class="chip" id="chStrong"><input type="checkbox" id="fStrong"> Strong only</span>
+  <span class="chip" id="chCross"><input type="checkbox" id="fCross"> ⚡ Pure 1M crossover</span>
   <button class="reset" id="reset">Reset filters</button>
   <span class="tag" id="count"></span>
 </div>
@@ -177,7 +181,7 @@ footer{margin-top:22px;color:var(--muted);font-size:12px}
   <tr id="hrow"></tr>
   <tr class="filt" id="frow"></tr>
 </thead>
-<tbody id="tbody"><tr><td id="loading" colspan="16">Loading data…</td></tr></tbody>
+<tbody id="tbody"><tr><td id="loading" colspan="17">Loading data…</td></tr></tbody>
 </table>
 </div>
 
@@ -217,6 +221,7 @@ const COLS=[
  {k:'live_rsi_1m',label:'1M live',type:'num',align:'r'},
  {k:'momentum_score',label:'Score',type:'num',align:'r'},
  {k:'days_since_1m_cross60',label:'Days since 1M>60',type:'num',align:'r'},
+ {k:'pure_crossover_1m',label:'Pure 1M x-over',type:'bool',align:'r'},
  {k:'days_in_signal',label:'Days in Signal',type:'num',align:'r'},
  {k:'category',label:'Signal',type:'cat',align:'l'},
  {k:'last_date',label:'Updated',type:'text',align:'l'},
@@ -251,10 +256,12 @@ function passes(d){
   if(document.getElementById('fSig').checked && !d.rsi_signal) return false;
   if(document.getElementById('fNew').checked && !d.is_new) return false;
   if(document.getElementById('fStrong').checked && d.category!=='Strong Momentum') return false;
+  if(document.getElementById('fCross').checked && !d.pure_crossover_1m) return false;
   for(const c of COLS){
     const ex=filters[c.k]; if(!ex) continue;
     if(c.type==='num'){ if(!matchNum(d[c.k],ex)) return false; }
     else if(c.type==='cat'){ if(d.category!==ex) return false; }
+    else if(c.type==='bool'){ if(ex==='yes'&&!d[c.k]) return false; if(ex==='no'&&d[c.k]) return false; }
     else if(c.type==='text'){ if(!matchText(d[c.k],ex)) return false; }
   }
   return true;
@@ -291,11 +298,12 @@ function render(){
       '<td class="'+(d.live_rsi_1m!=null&&d.live_rsi_1m>60?'rsi-ok':'muted')+'">'+fnum(d.live_rsi_1m,1)+'</td>'+
       '<td>'+fnum(d.momentum_score,1)+'</td>'+
       '<td>'+(d.days_since_1m_cross60!=null?d.days_since_1m_cross60:'<span class=muted>–</span>')+'</td>'+
+      '<td>'+(d.pure_crossover_1m?'<span class="badge b-cross">⚡ CROSS</span>':'<span class=muted>–</span>')+'</td>'+
       '<td>'+days+'</td>'+
       '<td class="l"><span class="badge '+cls+'">'+(CATEMOJI[d.category]||'')+' '+d.category+'</span>'+prov+'</td>'+
       '<td class="l muted">'+(d.last_date||'–')+'</td></tr>';
   }).join('');
-  tb.innerHTML=frag + (rows.length>3000?'<tr><td class="l muted" colspan="16">… '+(rows.length-3000).toLocaleString('en-IN')+' more rows hidden — filter to narrow.</td></tr>':'');
+  tb.innerHTML=frag + (rows.length>3000?'<tr><td class="l muted" colspan="17">… '+(rows.length-3000).toLocaleString('en-IN')+' more rows hidden — filter to narrow.</td></tr>':'');
 }
 function buildHead(){
   document.getElementById('hrow').innerHTML=COLS.map(c=>{
@@ -305,6 +313,7 @@ function buildHead(){
   document.getElementById('frow').innerHTML=COLS.map(c=>{
     if(c.type==='rank') return '<th></th>';
     if(c.type==='cat') return '<th><select data-k="'+c.k+'"><option value="">All</option>'+CATS.map(x=>'<option>'+x+'</option>').join('')+'</select></th>';
+    if(c.type==='bool') return '<th><select data-k="'+c.k+'"><option value="">All</option><option value="yes">Yes</option><option value="no">No</option></select></th>';
     const ph=c.type==='num'?'>60':'text';
     return '<th><input data-k="'+c.k+'" placeholder="'+ph+'"></th>';
   }).join('');
@@ -324,7 +333,7 @@ function buildTop(){
   document.getElementById('sub').innerHTML='Last scan: '+esc(META.timestamp)+' IST · Mode: '+(META.confirmed_only?'Confirmed candles':'PROVISIONAL')+' · Data: Yahoo Finance (adjusted OHLC) · Generated '+esc(META.generated);
   document.getElementById('cond').innerHTML='Primary signal — 1M RSI &gt; '+th.monthly_gt+' &nbsp;AND&nbsp; 1W RSI &gt; '+th.weekly_gt+' &nbsp;AND&nbsp; 1D RSI &gt; '+th.daily_gt+
     '<small>Which NSE/BSE stocks show strong long-term momentum while keeping healthy daily &amp; weekly momentum?</small>';
-  const T=[['scanned','Scanned',''],['n_new','🚨 New Signals','new'],['n_active','🟢 In Signal',''],['n_strong','🔵 Strong','strong'],['n_exited','Exited','exit']];
+  const T=[['scanned','Scanned',''],['n_new','🚨 New Signals','new'],['n_active','🟢 In Signal',''],['n_strong','🔵 Strong','strong'],['n_crossover','⚡ Pure 1M X-overs','strong'],['n_exited','Exited','exit']];
   document.getElementById('tiles').innerHTML=T.map(([k,l,c])=>'<div class="tile '+c+'"><div class="n">'+(META[k]!=null?Number(META[k]).toLocaleString('en-IN'):'–')+'</div><div class="l">'+l+'</div></div>').join('');
 }
 function trend(cur,prev){if(cur==null||prev==null) return ''; const d=cur-prev,a=d>0?'▲':(d<0?'▼':'▬'); return ' <span class="tag">'+a+' '+d.toFixed(1)+' vs prev</span>';}
@@ -346,6 +355,7 @@ function openModal(d){
    R('Momentum Score',d.momentum_score!=null?d.momentum_score:'–')+
    R('Days since 1M&gt;60 (live)',d.days_since_1m_cross60!=null?(d.days_since_1m_cross60+' days'+(d.months_since_1m_cross60!=null?' ('+d.months_since_1m_cross60+' mo)':'')):'not above 60')+
    R('1M crossed 60 on',esc(d.m1_cross_date||'—'))+
+   R('Pure 1M crossover',d.pure_crossover_1m?'⚡ Yes — clean cross (was &lt;60 for 6 mo)':'No')+
    R('Days in Signal',d.days_in_signal!=null?d.days_in_signal+' trading days':'—')+
    R('In signal since',esc(d.signal_since||'—'))+
    R('Signal',(CATEMOJI[d.category]||'')+' '+esc(d.category))+
@@ -361,16 +371,16 @@ function boot(){
   NEW=new Set(META.new_isins||[]);
   DATA.forEach(d=>d.is_new=NEW.has(d.isin));
   buildTop(); buildHead(); render();
-  ['q','fSig','fNew','fStrong'].forEach(id=>{const el=document.getElementById(id);
+  ['q','fSig','fNew','fStrong','fCross'].forEach(id=>{const el=document.getElementById(id);
     el.addEventListener(el.type==='checkbox'?'change':'input',render);});
-  [['fSig','chSig'],['fNew','chNew'],['fStrong','chStrong']].forEach(([f,c])=>{
+  [['fSig','chSig'],['fNew','chNew'],['fStrong','chStrong'],['fCross','chCross']].forEach(([f,c])=>{
     document.getElementById(f).addEventListener('change',()=>document.getElementById(c).classList.toggle('on',document.getElementById(f).checked));
   });
   document.getElementById('reset').onclick=()=>{
     for(const k in filters) delete filters[k];
     document.getElementById('q').value='';
-    ['fSig','fNew','fStrong'].forEach(id=>{document.getElementById(id).checked=false;});
-    ['chSig','chNew','chStrong'].forEach(id=>document.getElementById(id).classList.remove('on'));
+    ['fSig','fNew','fStrong','fCross'].forEach(id=>{document.getElementById(id).checked=false;});
+    ['chSig','chNew','chStrong','chCross'].forEach(id=>document.getElementById(id).classList.remove('on'));
     buildHead(); render();
   };
   document.getElementById('tbody').onclick=e=>{const tr=e.target.closest('tr[data-isin]'); if(!tr) return; const d=DATA.find(x=>x.isin===tr.dataset.isin); if(d) openModal(d);};

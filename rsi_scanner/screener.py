@@ -51,6 +51,7 @@ class ScreenResult:
     days_since_1m_cross60: int | None = None
     m1_cross_date: str | None = None
     months_since_1m_cross60: int | None = None
+    pure_crossover_1m: bool = False
     market_cap_cr: float | None = None
     mcap_class: str = "Unknown"
     pe: float | None = None
@@ -91,7 +92,7 @@ def compute_rsis(cfg: Config, daily: pd.DataFrame) -> dict:
         "rsi_1d": None, "rsi_1w": None, "rsi_1m": None,
         "prev_1d": None, "prev_1w": None, "prev_1m": None,
         "price": None, "avg_volume": None, "last_date": None,
-        "live_rsi_1m": None,
+        "live_rsi_1m": None, "pure_crossover_1m": False,
         "m1_cross_days": None, "m1_cross_date": None,
         "m1_cross_months": None, "m1_cross_before_data": False,
         "provisional": False, "flags": flags,
@@ -161,6 +162,13 @@ def compute_rsis(cfg: Config, daily: pd.DataFrame) -> dict:
             res["m1_cross_date"] = cdate
             res["m1_cross_months"] = months
             res["m1_cross_before_data"] = before
+            # "Pure" crossover: live RSI now above 60 AND every one of the prior
+            # `lookback` monthly RSI values was below 60 (a clean first cross).
+            lookback = int(cfg.get("crossover", "lookback_months", default=6))
+            cur = ml_series.iloc[-1]
+            if cur > level and len(ml_series) >= lookback + 1:
+                prior = ml_series.iloc[-(lookback + 1):-1]
+                res["pure_crossover_1m"] = bool((prior < level).all())
 
     res["provisional"] = not confirmed_only
     return res
@@ -288,6 +296,7 @@ def screen_security(cfg: Config, sec: dict, daily: pd.DataFrame, fund: dict | No
         days_in_signal=days_in_signal, signal_since=signal_since,
         days_since_1m_cross60=rr["m1_cross_days"], m1_cross_date=rr["m1_cross_date"],
         months_since_1m_cross60=rr["m1_cross_months"],
+        pure_crossover_1m=rr["pure_crossover_1m"],
         market_cap_cr=fund.get("market_cap_cr"),
         mcap_class=fund.get("mcap_class", "Unknown"),
         pe=fund.get("pe"), pe_type=fund.get("pe_type", "trailing"),

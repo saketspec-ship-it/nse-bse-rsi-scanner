@@ -23,6 +23,11 @@ classification:
     weekly_gt: 35
     daily_gt: 35
 
+# "Pure" 1M>60 crossover: RSI is now above 60 but was below 60 for the whole
+# preceding window (a clean first cross, not a re-cross around the level).
+crossover:
+  lookback_months: 6         # months the 1M RSI must have stayed below 60
+
 candles:
   # Use only completed weekly/monthly candles for the confirmed signal.
   # When false (intraday/provisional mode) the in-progress candle is included
