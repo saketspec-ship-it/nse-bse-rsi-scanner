@@ -38,6 +38,7 @@ class ScreenResult:
     rsi_1d: float | None = None
     rsi_1w: float | None = None
     rsi_1m: float | None = None
+    live_rsi_1m: float | None = None
     prev_rsi_1d: float | None = None
     prev_rsi_1w: float | None = None
     prev_rsi_1m: float | None = None
@@ -90,6 +91,7 @@ def compute_rsis(cfg: Config, daily: pd.DataFrame) -> dict:
         "rsi_1d": None, "rsi_1w": None, "rsi_1m": None,
         "prev_1d": None, "prev_1w": None, "prev_1m": None,
         "price": None, "avg_volume": None, "last_date": None,
+        "live_rsi_1m": None,
         "m1_cross_days": None, "m1_cross_date": None,
         "m1_cross_months": None, "m1_cross_before_data": False,
         "provisional": False, "flags": flags,
@@ -133,20 +135,28 @@ def compute_rsis(cfg: Config, daily: pd.DataFrame) -> dict:
             res["prev_1w"] = _round(w_series.iloc[-2])
 
     # ---- Monthly RSI -----------------------------------------------------
-    monthly = resample_ohlc(daily, mrule)
-    if confirmed_only:
-        monthly = drop_incomplete_last(monthly, mrule, asof)
+    # monthly_full includes the in-progress (live) month; `monthly` is the
+    # confirmed series used for the signal (completed candles only).
+    monthly_full = resample_ohlc(daily, mrule)
+    monthly = drop_incomplete_last(monthly_full, mrule, asof) if confirmed_only else monthly_full
+    level = float(cfg.thresholds["monthly_gt"])
+
     if len(monthly) < min_m + period:
         flags.append("Insufficient monthly history")
     else:
         m_series = wilder_rsi(monthly["Close"], period).dropna()
         if len(m_series) >= 2:
-            res["rsi_1m"] = _round(m_series.iloc[-1])
+            res["rsi_1m"] = _round(m_series.iloc[-1])       # confirmed -> signal
             res["prev_1m"] = _round(m_series.iloc[-2])
-            # How recently the MONTHLY RSI last crossed up through the 60 level
-            # (fresh crossings tend to precede the strongest momentum).
-            level = float(cfg.thresholds["monthly_gt"])
-            days, cdate, months, before = _last_cross_up(m_series, level, asof)
+
+    # Live monthly RSI (in-progress candle) + the "days since 1M>60" crossing,
+    # both computed on the LIVE series so they match a live trading chart. The
+    # crossing is reported only while the LIVE RSI is currently above 60.
+    if len(monthly_full) >= min_m + period:
+        ml_series = wilder_rsi(monthly_full["Close"], period).dropna()
+        if len(ml_series) >= 1:
+            res["live_rsi_1m"] = _round(ml_series.iloc[-1])
+            days, cdate, months, before = _last_cross_up(ml_series, level, asof)
             res["m1_cross_days"] = days
             res["m1_cross_date"] = cdate
             res["m1_cross_months"] = months
@@ -175,8 +185,12 @@ def _last_cross_up(series: pd.Series, level: float, asof) -> tuple[int | None, s
     before = cross_i is None
     if before:
         cross_i = 0
-    cdate = pd.Timestamp(series.index[cross_i])
-    days = int((pd.Timestamp(asof).normalize() - cdate.normalize()).days)
+    asof_ts = pd.Timestamp(asof).normalize()
+    cdate = pd.Timestamp(series.index[cross_i]).normalize()
+    # The crossing candle's label can sit in the future (the in-progress month's
+    # month-end label); clamp to the last data date so "days since" is >= 0.
+    eff = min(cdate, asof_ts)
+    days = int((asof_ts - eff).days)
     months = int((len(vals) - 1) - cross_i)
     return days, cdate.strftime("%Y-%m-%d"), months, before
 
@@ -267,6 +281,7 @@ def screen_security(cfg: Config, sec: dict, daily: pd.DataFrame, fund: dict | No
         yahoo_ticker=sec["yahoo_ticker"],
         price=_round(price) if price is not None else None,
         rsi_1d=rr["rsi_1d"], rsi_1w=rr["rsi_1w"], rsi_1m=rr["rsi_1m"],
+        live_rsi_1m=rr["live_rsi_1m"],
         prev_rsi_1d=rr["prev_1d"], prev_rsi_1w=rr["prev_1w"], prev_rsi_1m=rr["prev_1m"],
         rsi_signal=signal, category=category, provisional=rr["provisional"],
         momentum_score=score,

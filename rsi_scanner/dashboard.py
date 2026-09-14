@@ -137,7 +137,7 @@ tbody tr:hover{background:var(--blu-bg);cursor:pointer}
 .b-insuff{background:var(--red-bg);color:var(--gry)}
 .new-dot{color:var(--grn);font-weight:700}.prov{color:var(--yel);font-size:11px}
 .muted{color:var(--muted)}.sortarrow{font-size:10px;opacity:.7}
-.days{font-weight:600}
+.days{font-weight:600}.rsi-ok{color:var(--grn);font-weight:600}
 .disc{margin-top:16px;padding:12px 14px;border:1px dashed var(--line);border-radius:10px;background:var(--card);color:var(--muted)}
 footer{margin-top:22px;color:var(--muted);font-size:12px}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;padding:16px;z-index:10}
@@ -177,7 +177,7 @@ footer{margin-top:22px;color:var(--muted);font-size:12px}
   <tr id="hrow"></tr>
   <tr class="filt" id="frow"></tr>
 </thead>
-<tbody id="tbody"><tr><td id="loading" colspan="15">Loading data…</td></tr></tbody>
+<tbody id="tbody"><tr><td id="loading" colspan="16">Loading data…</td></tr></tbody>
 </table>
 </div>
 
@@ -192,6 +192,10 @@ footer{margin-top:22px;color:var(--muted);font-size:12px}
   Categories: 🔴 No Signal · 🟡 Watchlist · 🟢 Primary Signal · 🔵 Strong Momentum · ⚪ Insufficient Data.
   Every column sorts (click header) and filters (box below it; numeric boxes accept <code>&gt;60</code>,
   <code>&lt;15</code>, <code>40-60</code>, or a number = ≥). Click any row for details.
+  <br><b>RSI 1M</b> = last <i>completed</i> monthly candle (drives the signal, per the completed-candle rule).
+  <b>1M live</b> = current in-progress month (matches a live chart). <b>Days since 1M&gt;60</b> uses the
+  <i>live</i> value, so it is blank when the live monthly RSI is not currently above 60 — even if the last
+  completed candle was.
 </footer>
 </div>
 
@@ -210,6 +214,7 @@ const COLS=[
  {k:'rsi_1d',label:'RSI 1D',type:'num',align:'r'},
  {k:'rsi_1w',label:'RSI 1W',type:'num',align:'r'},
  {k:'rsi_1m',label:'RSI 1M',type:'num',align:'r'},
+ {k:'live_rsi_1m',label:'1M live',type:'num',align:'r'},
  {k:'momentum_score',label:'Score',type:'num',align:'r'},
  {k:'days_since_1m_cross60',label:'Days since 1M>60',type:'num',align:'r'},
  {k:'days_in_signal',label:'Days in Signal',type:'num',align:'r'},
@@ -283,13 +288,14 @@ function render(){
       '<td>'+fnum(d.rsi_1d,1)+'</td>'+
       '<td>'+fnum(d.rsi_1w,1)+'</td>'+
       '<td>'+fnum(d.rsi_1m,1)+'</td>'+
+      '<td class="'+(d.live_rsi_1m!=null&&d.live_rsi_1m>60?'rsi-ok':'muted')+'">'+fnum(d.live_rsi_1m,1)+'</td>'+
       '<td>'+fnum(d.momentum_score,1)+'</td>'+
       '<td>'+(d.days_since_1m_cross60!=null?d.days_since_1m_cross60:'<span class=muted>–</span>')+'</td>'+
       '<td>'+days+'</td>'+
       '<td class="l"><span class="badge '+cls+'">'+(CATEMOJI[d.category]||'')+' '+d.category+'</span>'+prov+'</td>'+
       '<td class="l muted">'+(d.last_date||'–')+'</td></tr>';
   }).join('');
-  tb.innerHTML=frag + (rows.length>3000?'<tr><td class="l muted" colspan="15">… '+(rows.length-3000).toLocaleString('en-IN')+' more rows hidden — filter to narrow.</td></tr>':'');
+  tb.innerHTML=frag + (rows.length>3000?'<tr><td class="l muted" colspan="16">… '+(rows.length-3000).toLocaleString('en-IN')+' more rows hidden — filter to narrow.</td></tr>':'');
 }
 function buildHead(){
   document.getElementById('hrow').innerHTML=COLS.map(c=>{
@@ -335,9 +341,10 @@ function openModal(d){
    R('Forward P/E',d.forward_pe!=null?Number(d.forward_pe).toFixed(1):'–')+
    R('RSI 1D',(d.rsi_1d!=null?d.rsi_1d.toFixed(1):'–')+trend(d.rsi_1d,d.prev_rsi_1d))+
    R('RSI 1W',(d.rsi_1w!=null?d.rsi_1w.toFixed(1):'–')+trend(d.rsi_1w,d.prev_rsi_1w))+
-   R('RSI 1M',(d.rsi_1m!=null?d.rsi_1m.toFixed(1):'–')+trend(d.rsi_1m,d.prev_rsi_1m))+
+   R('RSI 1M (confirmed)',(d.rsi_1m!=null?d.rsi_1m.toFixed(1):'–')+trend(d.rsi_1m,d.prev_rsi_1m))+
+   R('RSI 1M (live)',(d.live_rsi_1m!=null?d.live_rsi_1m.toFixed(1)+(d.live_rsi_1m>60?' ▲>60':' <60'):'–'))+
    R('Momentum Score',d.momentum_score!=null?d.momentum_score:'–')+
-   R('Days since 1M RSI&gt;60',d.days_since_1m_cross60!=null?(d.days_since_1m_cross60+' days'+(d.months_since_1m_cross60!=null?' ('+d.months_since_1m_cross60+' mo)':'')):'—')+
+   R('Days since 1M&gt;60 (live)',d.days_since_1m_cross60!=null?(d.days_since_1m_cross60+' days'+(d.months_since_1m_cross60!=null?' ('+d.months_since_1m_cross60+' mo)':'')):'not above 60')+
    R('1M crossed 60 on',esc(d.m1_cross_date||'—'))+
    R('Days in Signal',d.days_in_signal!=null?d.days_in_signal+' trading days':'—')+
    R('In signal since',esc(d.signal_since||'—'))+
